@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual envs / uv ---
+.venv/
+venv/
+.python-version.local
+
+# --- Secrets / local config ---
+.env
+.env.local
+*.local
+
+# --- Data, model caches, generated artifacts ---
+# Ignore everything under data/ EXCEPT the .gitkeep marker, so the (otherwise
+# empty) directory is preserved in the repo tree.
+data/*
+!data/.gitkeep
+*.sqlite
+*.sqlite3
+*.db
+qdrant_storage/
+.cache/
+models/
+.huggingface/
+hf_cache/
+
+# --- Test / tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# --- Editor / OS ---
+.idea/
+.vscode/
+.DS_Store
