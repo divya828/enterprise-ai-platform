@@ -18,10 +18,16 @@ venv/
 *.local
 
 # --- Data, model caches, generated artifacts ---
-# Ignore everything under data/ EXCEPT the .gitkeep marker, so the (otherwise
-# empty) directory is preserved in the repo tree.
+# Ignore everything under data/ EXCEPT the .gitkeep marker and the synthetic
+# corpus fixtures (regenerable via scripts/generate_corpus.py; committed because
+# tests + the eval harness depend on them). Runtime artifacts like the embedded
+# Qdrant store stay ignored.
 data/*
 !data/.gitkeep
+!data/corpus/
+data/corpus/*
+!data/corpus/documents.json
+!data/corpus/golden.json
 *.sqlite
 *.sqlite3
 *.db

@@ -40,24 +40,65 @@ a concrete SDK. Swapping `EAIP_LLM_PROVIDER` changes the backend with no code
 changes elsewhere. The `stub` backend is offline + deterministic and is what CI
 and all unit tests use.
 
-## Module layout (Phase 0)
+## Phase 1 — ingestion flow
+
+```
+ data/corpus/documents.json  (30 synthetic docs w/ ACLs; 1 planted injection)
+            │
+            ▼
+   connectors_from_corpus()  ── one CorpusConnector per source ──┐
+            │   fetch_since(watermark)   current_ids()           │
+            ▼                                                     │
+   ┌──────────────────────── IngestionPipeline.sync() ───────────┘
+   │  for each changed doc:                         (SyncState: per-source
+   │    chunk_document(doc) ── ACL copied onto       watermark + indexed ids,
+   │      every chunk, deterministic ids             persisted to JSON)
+   │           │
+   │           ▼
+   │    embedder.embed_documents(texts)   ← hashing (default) | BGE (opt-in)
+   │           │
+   │           ▼
+   │    index.delete_document(doc_id)     ← clear old chunks (no stale/dupes)
+   │    index.upsert_chunks(chunks, vecs) ← Qdrant points, ACL in payload
+   │
+   │  reconcile deletions: indexed_ids − current_ids → delete_document(tombstone)
+   └──────────────────────────────────────────────────────────────────────────
+
+   Result: Qdrant collection where every point carries
+   {doc_id, source, title, text, ordinal, last_modified, allowed_groups,
+    allowed_users, extra} — the ACL payload that Phase 2 filters on.
+```
+
+## Module layout (Phases 0–1)
 
 ```
 src/eaip/
 ├── __init__.py            # package version
 ├── app.py                 # FastAPI app factory + /health, /hello
 ├── config/
-│   ├── __init__.py
-│   └── settings.py        # typed Settings (pydantic-settings), LLMProvider enum
-└── providers/
-    ├── __init__.py        # public surface (protocol, types, factory)
-    ├── types.py           # Role, Message, ToolCall, Usage, Completion
-    ├── base.py            # LLMProvider Protocol + ProviderError
-    ├── factory.py         # get_provider(settings) -> LLMProvider
-    ├── stub.py            # scripted/echo offline default
-    ├── ollama.py          # local models via HTTP
-    ├── anthropic.py       # Claude via SDK (lazy import)
-    └── openai.py          # GPT via SDK (lazy import)
+│   └── settings.py        # typed Settings; LLMProvider + EmbedderName enums
+├── providers/             # LLM provider abstraction (Phase 0)
+│   ├── types.py           # Role, Message, ToolCall, Usage, Completion
+│   ├── base.py            # LLMProvider Protocol + ProviderError
+│   ├── factory.py         # get_provider(settings) -> LLMProvider
+│   └── {stub,ollama,anthropic,openai}.py
+├── ingestion/             # Phase 1: sources -> documents -> chunks
+│   ├── models.py          # ACL, Document, Chunk, SourceType
+│   ├── connectors.py      # Connector protocol + CorpusConnector + loaders
+│   └── chunker.py         # structure-aware chunking (size/overlap)
+├── embeddings/            # Phase 1: text -> dense vectors
+│   ├── base.py            # Embedder Protocol
+│   ├── factory.py         # get_embedder(settings)
+│   ├── hashing.py         # offline deterministic default
+│   └── bge.py             # sentence-transformers (opt-in, lazy import)
+└── index/                 # Phase 1: vectors -> Qdrant + the pipeline
+    ├── store.py           # ChunkIndex (Qdrant wrapper), ScoredChunk
+    ├── acl_filter.py      # access_filter(user, groups) -> Qdrant Filter
+    └── pipeline.py        # IngestionPipeline, SyncState, SyncReport
+
+scripts/
+├── generate_corpus.py     # regenerate the synthetic corpus + golden set
+└── ingest.py              # run a full ingest into embedded Qdrant
 ```
 
 ## Target shape (phases 1–6, for orientation)

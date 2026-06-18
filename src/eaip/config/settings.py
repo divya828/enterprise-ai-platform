@@ -35,6 +35,17 @@ class LLMProvider(StrEnum):
     OPENAI = "openai"
 
 
+class EmbedderName(StrEnum):
+    """Supported dense embedders, selected via ``EAIP_EMBEDDER``.
+
+    ``hashing`` is offline + deterministic (default, used by tests). ``bge`` is a
+    real sentence-transformers model for actual semantic quality.
+    """
+
+    HASHING = "hashing"
+    BGE = "bge"
+
+
 class Settings(BaseSettings):
     """All runtime configuration in one validated object.
 
@@ -65,6 +76,24 @@ class Settings(BaseSettings):
     # var is e.g. ANTHROPIC_API_KEY, not EAIP_ANTHROPIC_API_KEY.
     anthropic_api_key: str | None = Field(default=None, alias="ANTHROPIC_API_KEY")
     openai_api_key: str | None = Field(default=None, alias="OPENAI_API_KEY")
+
+    # --- Embeddings ---
+    embedder: EmbedderName = Field(
+        default=EmbedderName.HASHING,
+        description="Dense embedder backend. Defaults to the offline hashing embedder.",
+    )
+    embedding_dim: int = Field(
+        default=256,
+        description="Vector dimension for the hashing embedder (ignored by BGE).",
+    )
+    bge_model: str = Field(default="BAAI/bge-small-en-v1.5")
+
+    # --- Vector store (Qdrant) ---
+    qdrant_path: Path = Field(
+        default=Path("./data/qdrant"),
+        description="On-disk path for the embedded Qdrant store. Use ':memory:' for ephemeral.",
+    )
+    qdrant_collection: str = Field(default="eaip_chunks")
 
     # --- Runtime ---
     data_dir: Path = Field(default=Path("./data"))

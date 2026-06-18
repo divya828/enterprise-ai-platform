@@ -18,8 +18,8 @@ roadmap).
 
 ## Status
 
-Built in phases (0–6). **Phase 0 (scaffolding) is complete.** See
-[PROJECT_PLAN.md](PROJECT_PLAN.md) for what each phase delivers.
+Built in phases (0–6). **Phases 0–1 are complete** (scaffolding; ingestion +
+connectors). See [PROJECT_PLAN.md](PROJECT_PLAN.md) for what each phase delivers.
 
 ## Prerequisites
 
@@ -62,6 +62,25 @@ curl -X POST localhost:8000/hello -H 'content-type: application/json' \
 ```
 
 Interactive API docs are at `http://localhost:8000/docs`.
+
+### Ingest the corpus (Phase 1)
+
+The synthetic corpus (`data/corpus/documents.json`, regenerable via
+`uv run python scripts/generate_corpus.py`) is ingested into an embedded Qdrant
+index — no Docker, no API key, no model download (the default embedder is an
+offline hashing embedder):
+
+```bash
+uv sync --extra rag
+uv run python scripts/ingest.py
+# [confluence] upserted 16 docs (16 chunks), deleted 0 docs
+# ... Total indexed chunks: 30
+```
+
+Run it again — it upserts **0** documents (the per-source watermark is persisted)
+and the chunk total stays flat (re-index updates rather than duplicates). To use
+real semantic embeddings instead: `EAIP_EMBEDDER=bge uv run python scripts/ingest.py`
+(downloads BGE-small on first run).
 
 ## Test
 
@@ -113,7 +132,10 @@ Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
 | Provider strategy / avoiding lock-in     | [`src/eaip/providers/`](src/eaip/providers/)  |
 | Typed configuration / config layer       | [`src/eaip/config/`](src/eaip/config/)        |
 | HTTP surface / app factory + DI          | [`src/eaip/app.py`](src/eaip/app.py)          |
-| Ingestion, chunking, ACL-aware indexing  | `src/eaip/ingestion/` _(Phase 1)_             |
+| Connectors, ACL model, structure-aware chunking | [`src/eaip/ingestion/`](src/eaip/ingestion/) |
+| Dense embeddings (hashing / BGE)         | [`src/eaip/embeddings/`](src/eaip/embeddings/) |
+| Qdrant index, ACL filter, ingestion pipeline | [`src/eaip/index/`](src/eaip/index/)      |
+| Synthetic corpus + golden set            | [`scripts/generate_corpus.py`](scripts/generate_corpus.py), [`data/corpus/`](data/corpus/) |
 | Hybrid retrieval, RRF, reranking, citations | `src/eaip/retrieval/` _(Phase 2)_          |
 | LangGraph orchestration, supervisor + critic, HITL | `src/eaip/orchestration/` _(Phase 3)_ |
 | Multi-tenancy, RBAC, audit, prompt registry | `src/eaip/platform/` _(Phase 4)_           |

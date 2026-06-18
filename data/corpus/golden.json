@@ -1,0 +1,157 @@
+[
+  {
+    "q": "How do I set up the VPN?",
+    "a": "Download the GlobalConnect client from the IT portal and sign in with SSO.",
+    "doc": "CONF-2"
+  },
+  {
+    "q": "What do I do on my first day?",
+    "a": "Collect your laptop from IT on the 3rd floor and sign in with SSO.",
+    "doc": "CONF-1"
+  },
+  {
+    "q": "How does retrieval work in the platform?",
+    "a": "It combines dense and sparse search, fuses with RRF, and reranks with a cross-encoder.",
+    "doc": "CONF-3"
+  },
+  {
+    "q": "What is a SEV1 incident?",
+    "a": "A full outage; the on-call engineer becomes incident commander and posts updates every 30 minutes.",
+    "doc": "CONF-4"
+  },
+  {
+    "q": "How many reviews are required to merge code?",
+    "a": "One approving review.",
+    "doc": "CONF-5"
+  },
+  {
+    "q": "What is the meal reimbursement limit while traveling?",
+    "a": "Up to 50 dollars per day.",
+    "doc": "CONF-6"
+  },
+  {
+    "q": "Within how many days must expenses be submitted?",
+    "a": "Within 30 days.",
+    "doc": "CONF-6"
+  },
+  {
+    "q": "Why does the VPN client crash on macOS Sonoma?",
+    "a": "A known bug; the workaround is to reinstall version 4.2.",
+    "doc": "JIRA-101"
+  },
+  {
+    "q": "What feature is planned for the dashboard in Q2?",
+    "a": "A dark mode theme.",
+    "doc": "JIRA-102"
+  },
+  {
+    "q": "What causes retrieval latency spikes?",
+    "a": "The cross-encoder reranking step; mitigation is to rerank only the top 50 candidates.",
+    "doc": "JIRA-103"
+  },
+  {
+    "q": "What is the mitigation for retrieval latency?",
+    "a": "Only rerank the top 50 fused candidates.",
+    "doc": "JIRA-103"
+  },
+  {
+    "q": "Which reranker model was selected?",
+    "a": "The BGE reranker base model.",
+    "doc": "JIRA-108"
+  },
+  {
+    "q": "How many days per week can employees work remotely?",
+    "a": "Up to five days per week with manager approval.",
+    "doc": "CONF-11"
+  },
+  {
+    "q": "How long are audit logs retained?",
+    "a": "One year.",
+    "doc": "CONF-12"
+  },
+  {
+    "q": "How do I authenticate API requests?",
+    "a": "With a bearer token in the Authorization header; tokens are per-tenant and expire after 90 days.",
+    "doc": "CONF-13"
+  },
+  {
+    "q": "How often are releases shipped?",
+    "a": "Every two weeks.",
+    "doc": "CONF-14"
+  },
+  {
+    "q": "How do I roll back a release?",
+    "a": "Redeploy the previous tag.",
+    "doc": "CONF-14"
+  },
+  {
+    "q": "Where do I report phishing emails?",
+    "a": "To security@acme.test.",
+    "doc": "CONF-15"
+  },
+  {
+    "q": "How often does the on-call rotation hand off?",
+    "a": "Weekly, Monday at 10am.",
+    "doc": "CONF-16"
+  },
+  {
+    "q": "What is Alice Chen's title?",
+    "a": "Senior Engineer.",
+    "doc": "DB-EMP-1"
+  },
+  {
+    "q": "What department is Carol Singh in?",
+    "a": "Retrieval.",
+    "doc": "DB-EMP-3"
+  },
+  {
+    "q": "Where is Bob Diaz located?",
+    "a": "Austin.",
+    "doc": "DB-EMP-2"
+  },
+  {
+    "q": "What is the quarterly budget for Platform Engineering?",
+    "a": "1.2 million dollars.",
+    "doc": "DB-COST-1"
+  },
+  {
+    "q": "How do I get help as a new hire?",
+    "a": "Ask in the #help Slack channel.",
+    "doc": "CONF-1"
+  },
+  {
+    "q": "What should I do if the VPN fails to connect?",
+    "a": "Restart the client and ensure you are not on a guest network.",
+    "doc": "CONF-2"
+  },
+  {
+    "q": "What blocks contractor payments?",
+    "a": "The payroll export omits contractor records.",
+    "doc": "JIRA-104",
+    "restricted_group": "finance"
+  },
+  {
+    "q": "What is the FY26 revenue forecast?",
+    "a": "About 42 million dollars in ARR, up 18 percent.",
+    "doc": "CONF-7",
+    "restricted_group": "finance"
+  },
+  {
+    "q": "What is the salary band for Level 5 engineers?",
+    "a": "Between 185,000 and 230,000 dollars.",
+    "doc": "CONF-8",
+    "restricted_group": "hr"
+  },
+  {
+    "q": "What is Alice Chen's salary?",
+    "a": "178,000 dollars.",
+    "doc": "DB-SAL-1",
+    "restricted_group": "finance"
+  },
+  {
+    "q": "How much is Acme paying for the Project Falcon acquisition?",
+    "a": "Approximately 90 million dollars.",
+    "doc": "CONF-9",
+    "restricted_user": "ceo@acme.test"
+  }
+]

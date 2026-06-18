@@ -41,13 +41,17 @@ a working offline default, and a passing smoke test.
 **DoD:** `uv run pytest` passes; the app boots; the provider returns a completion
 locally with no key.
 
-### Phase 1 — Ingestion & connectors
-Mock Confluence/Jira/DB connectors loading a synthetic corpus with metadata +
-ACLs; a structure-aware chunker preserving metadata + ACLs per chunk; embedding
-+ indexing into Qdrant.
-**Edge cases (handled + tested):** incremental re-indexing via a `last_synced`
-watermark (upsert, no duplicates); deletions/tombstones (deleting a source doc
-removes its chunks); ACL metadata surviving onto every chunk.
+### Phase 1 — Ingestion & connectors ✅ (complete)
+Mock Confluence/Jira/DB connectors loading a synthetic corpus (30 docs, 12
+restricted, 1 planted injection) with metadata + ACLs; a structure-aware chunker
+preserving metadata + ACLs per chunk; an embedder abstraction (hashing default,
+BGE opt-in); embedding + indexing into embedded Qdrant; a golden eval set (30
+triples) for Phase 5.
+**Edge cases (handled + tested):** incremental re-indexing via a per-source
+watermark, persisted across runs (second `ingest.py` run upserts 0);
+deletions/tombstones (deleting a source doc removes all its chunks → not
+retrievable); re-index updates rather than duplicates (deterministic ids; stale
+chunks cleared when a doc shrinks); ACL metadata surviving onto every chunk.
 
 ### Phase 2 — Retrieval (the RAG core)
 Dense + sparse/BM25 retrieval, explicit RRF fusion, cross-encoder reranking of

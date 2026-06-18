@@ -68,3 +68,78 @@ the plan is SQLite-by-default behind an abstracted storage layer. In production
 the swap to Postgres would change the connection/driver and migration tooling,
 not the call sites — this is the same "depend on an interface, not an
 implementation" principle as the provider abstraction, applied to storage.
+
+---
+
+## Phase 1 — Ingestion & connectors
+
+**Core concept: the ingestion pipeline (connectors → chunker → embedder →
+index).** RAG starts long before retrieval. A *connector* pulls documents from a
+source of record with their metadata and access-control list; a *chunker* splits
+each document into retrievable units; an *embedder* turns chunk text into a
+vector; the *index* stores vectors + payload in Qdrant. The pipeline wires these
+into one `sync()` call. Keeping each stage a separate, single-responsibility unit
+is what makes the edge cases tractable — each one lives in exactly one place.
+
+**The ACL must travel with the data (the security thread).** The single most
+important invariant in Phase 1: a document's ACL is copied onto *every chunk* and
+stored in *every Qdrant point's payload*. If it didn't survive chunking and
+indexing, permission-aware retrieval (Phase 2) would be impossible — you'd have
+no per-chunk basis to filter on. So an "ACL dropped during chunking" bug is
+really a data-leak bug. We model a deliberately small, **fail-closed** ACL: empty
+lists grant access to no one; a user reads a chunk if named directly OR in any
+allowed group. Tested end to end: index a finance-only doc, confirm the ACL is
+intact on the retrieved chunk.
+
+**Edge case — incremental re-indexing (the watermark).** Re-ingesting an entire
+corpus on every sync doesn't scale (imagine the spec's "15M documents"). The
+pipeline keeps a per-source *watermark* = the newest `last_modified` it has
+indexed, and asks the connector for only documents changed after it
+(`fetch_since`). Why per-source: real syncs run independently per source, each
+with its own cadence; one source's sync must not reset another's progress
+(tested). Why it matters: the second `scripts/ingest.py` run upserts **0**
+documents — proven across *processes* because `SyncState` is persisted to JSON.
+
+**Edge case — re-index updates, never duplicates (idempotency).** Chunk ids are
+deterministic (`{doc_id}::{ordinal}`), and the Qdrant point id is a stable
+`uuid5` of the chunk id. So re-processing a document *overwrites* its points
+rather than appending new ones — the chunk count stays flat. A subtle sub-case:
+if an edited document is now *shorter* (fewer chunks), the old extra chunks would
+linger. We handle it by deleting the document's chunks before re-upserting, so no
+stale chunk survives (tested: shrink a 120-token doc to 2 tokens → exactly 1
+chunk remains).
+
+**Edge case — deletions / tombstones.** Deleting a source document must make it
+unretrievable, including all its derived chunks. The pipeline remembers the doc
+ids it indexed per source and, each sync, diffs them against the connector's
+*current* ids; any id that vanished is deleted by a `doc_id` payload filter
+(removing every chunk, no orphans). Tested: a deleted doc returns zero hits.
+
+**Decision/tradeoff — offline hashing embedder as the default.** Embedding the
+corpus needs a model; BGE-small is a ~130MB download. Mirroring the stub-LLM
+choice, the default embedder is a **feature-hashing** embedder: deterministic,
+offline, dependency-free, so the whole ingestion+retrieval pipeline runs in CI in
+milliseconds. It is *not* semantically smart (no synonyms/paraphrase) — it exists
+to test the machinery (dense search, ACL filtering, dedup) without conflating it
+with model quality. Real semantic quality comes from `EAIP_EMBEDDER=bge`. This
+separation — test the plumbing deterministically, swap in a real model for
+quality — is a recurring pattern in this build.
+
+**Decision/tradeoff — Qdrant point ids.** Qdrant requires unsigned-int or UUID
+ids, but our human-readable `chunk_id` is a string. Rather than maintain a
+side-table, we derive the point id as `uuid5(fixed_namespace, chunk_id)` and keep
+`chunk_id` in the payload — deterministic, stable across runs, and idempotent by
+construction.
+
+**Decision/tradeoff — structure-aware chunking.** We split on markdown structure
+(headings → paragraphs) and pack into size-bounded windows with overlap, rather
+than a blind fixed window. Boundaries fall at natural seams and each chunk is
+prefixed with its section heading (so the heading's keywords are searchable).
+Overlap repeats a tail of one chunk at the head of the next so a fact straddling
+a boundary still matches — the cost is some duplication, made explicit via the
+`max_tokens`/`overlap_tokens` knobs. "Size" is measured in whitespace tokens (a
+model-agnostic proxy); a production system would use the embedder's tokenizer.
+
+**Production note.** `SyncState` is persisted to JSON here; in production it would
+be a row in the abstracted storage layer (SQLite/Postgres) — same shape. Qdrant
+runs embedded/on-disk (no Docker) for the app and `:memory:` for tests.
