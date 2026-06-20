@@ -17,65 +17,23 @@ This ties Phase 1 together and is where the three required edge cases live:
 * **ACL preservation.** Chunking copies the document ACL onto every chunk and the
   index stores it in each point's payload — verified end to end by the tests.
 
-The watermark/seen-id state lives in a ``SyncState`` object. Tests keep it in
-memory; the app persists it to JSON (``SyncState.save``/``load``) so syncs are
-incremental across process restarts. In production this JSON file would be a row
-in the abstracted storage layer (SQLite/Postgres) — same shape, different store.
+The watermark/seen-id state lives in a :class:`~eaip.storage.SyncState` and is
+persisted through a :class:`~eaip.storage.StateStore` — the storage abstraction.
+Tests use the in-memory store; the app uses SQLite, so syncs are incremental
+across process restarts. Swapping to Postgres later means a new store class, not
+a pipeline change.
 """
 
 from __future__ import annotations
 
-import json
-from dataclasses import dataclass, field
-from datetime import datetime
-from pathlib import Path
+from dataclasses import dataclass
 
 from eaip.embeddings.base import Embedder
 from eaip.index.store import ChunkIndex
 from eaip.ingestion.chunker import ChunkConfig, chunk_document
 from eaip.ingestion.connectors import Connector
 from eaip.ingestion.models import SourceType
-
-
-@dataclass
-class SyncState:
-    """Per-source sync bookkeeping (watermark + indexed doc ids).
-
-    Tests use it purely in memory. The app persists it to a small JSON file via
-    :meth:`save`/:meth:`load` so the watermark survives across process restarts —
-    which is what makes the second CLI run a true no-op rather than a full
-    re-sync. In production this JSON file would be a row in the abstracted storage
-    layer (SQLite/Postgres); the shape is identical, only the backing store
-    changes. Kept as a separate object so that swap doesn't touch pipeline logic.
-    """
-
-    watermarks: dict[SourceType, datetime] = field(default_factory=dict)
-    indexed_ids: dict[SourceType, set[str]] = field(default_factory=dict)
-
-    def save(self, path: str | Path) -> None:
-        """Persist watermarks + indexed ids to a JSON file."""
-        payload = {
-            "watermarks": {s.value: ts.isoformat() for s, ts in self.watermarks.items()},
-            "indexed_ids": {s.value: sorted(ids) for s, ids in self.indexed_ids.items()},
-        }
-        p = Path(path)
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(json.dumps(payload, indent=2) + "\n")
-
-    @classmethod
-    def load(cls, path: str | Path) -> SyncState:
-        """Load state from a JSON file, or return empty state if absent."""
-        p = Path(path)
-        if not p.exists():
-            return cls()
-        data = json.loads(p.read_text())
-        return cls(
-            watermarks={
-                SourceType(s): datetime.fromisoformat(ts)
-                for s, ts in data.get("watermarks", {}).items()
-            },
-            indexed_ids={SourceType(s): set(ids) for s, ids in data.get("indexed_ids", {}).items()},
-        )
+from eaip.storage import InMemoryStateStore, StateStore, SyncState
 
 
 @dataclass(frozen=True)
@@ -95,7 +53,12 @@ class SyncReport:
 
 
 class IngestionPipeline:
-    """Drives connectors through chunking, embedding, and indexing."""
+    """Drives connectors through chunking, embedding, and indexing.
+
+    Persistence is delegated to a :class:`StateStore`. The pipeline loads the
+    current :class:`SyncState` at the start of each sync and saves it at the end,
+    so a single ``sync`` call is atomic with respect to the stored watermark.
+    """
 
     def __init__(
         self,
@@ -103,26 +66,32 @@ class IngestionPipeline:
         embedder: Embedder,
         *,
         chunk_config: ChunkConfig | None = None,
-        state: SyncState | None = None,
+        store: StateStore | None = None,
     ) -> None:
         self._index = index
         self._embedder = embedder
         self._chunk_config = chunk_config or ChunkConfig()
-        self._state = state or SyncState()
+        self._store = store or InMemoryStateStore()
 
     @property
+    def store(self) -> StateStore:
+        return self._store
+
     def state(self) -> SyncState:
-        return self._state
+        """Return the currently persisted sync state (for inspection/tests)."""
+        return self._store.load_state()
 
     def sync(self, connector: Connector, *, full: bool = False) -> SyncReport:
         """Run one sync for a connector.
 
         ``full=True`` ignores the watermark and re-processes everything (a forced
         rebuild). Otherwise only documents newer than the source's watermark are
-        processed. Deletions are always reconciled.
+        processed. Deletions are always reconciled. The updated state is persisted
+        through the store before returning.
         """
         source = connector.source
-        watermark = None if full else self._state.watermarks.get(source)
+        state = self._store.load_state()
+        watermark = None if full else state.watermarks.get(source)
 
         # 1. Upsert new/changed documents.
         changed = connector.fetch_since(watermark)
@@ -140,16 +109,17 @@ class IngestionPipeline:
                 newest = doc.last_modified
 
         # 2. Reconcile deletions (tombstones).
-        seen = self._state.indexed_ids.setdefault(source, set())
+        seen = state.indexed_ids.get(source, set())
         current = connector.current_ids()
         deleted = seen - current
         for doc_id in deleted:
             self._index.delete_document(doc_id)
 
-        # 3. Update sync state.
+        # 3. Update + persist sync state.
         if newest is not None:
-            self._state.watermarks[source] = newest
-        self._state.indexed_ids[source] = set(current)
+            state.watermarks[source] = newest
+        state.indexed_ids[source] = set(current)
+        self._store.save_state(state)
 
         return SyncReport(
             source=source,

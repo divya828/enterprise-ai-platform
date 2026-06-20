@@ -13,8 +13,9 @@ for review before the next.
   docstrings that explain *why*.
 - **Edge cases are the point.** Each phase names the edge cases it handles and
   proves them with tests.
-- **Storage is abstracted.** SQLite by default; the storage layer is written so
-  Postgres is a drop-in swap (documented in LEARNINGS.md).
+- **Storage is abstracted.** SQLite by default behind a `StateStore` interface
+  (realized in Phase 1, reused by later phases); the layer is written so Postgres
+  is a drop-in swap (documented in LEARNINGS.md).
 
 ## Tech stack (defaults)
 

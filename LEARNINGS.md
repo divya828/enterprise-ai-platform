@@ -140,6 +140,23 @@ a boundary still matches — the cost is some duplication, made explicit via the
 `max_tokens`/`overlap_tokens` knobs. "Size" is measured in whitespace tokens (a
 model-agnostic proxy); a production system would use the embedder's tokenizer.
 
-**Production note.** `SyncState` is persisted to JSON here; in production it would
-be a row in the abstracted storage layer (SQLite/Postgres) — same shape. Qdrant
-runs embedded/on-disk (no Docker) for the app and `:memory:` for tests.
+**The storage-layer abstraction (industry-standard state).** Sync state is
+persisted through a `StateStore` interface (`eaip/storage/`), with two backends:
+`SqliteStateStore` (the app default) and `InMemoryStateStore` (tests). The
+pipeline depends only on the interface — the same payoff as the provider/embedder
+abstractions, now applied to durable state. This is the spec's *"abstract the
+storage layer so Postgres is a drop-in swap"*: a Postgres backend would be one
+new class implementing `StateStore` (swap the driver, `%s` placeholders, a
+connection pool), with no change to the pipeline or any call site. Later phases
+(audit log, prompt registry, tenant config) add sibling interfaces and tables to
+the *same* SQLite database/connection rather than re-inventing persistence.
+
+**Decision/tradeoff — SQLite with normalized tables, not a JSON blob.** State
+lives in real relational rows — `sync_watermark(source, watermark)` and
+`indexed_doc(source, doc_id)` — so it's queryable (`SELECT doc_id FROM
+indexed_doc WHERE source='jira'`) and is the shape an enterprise system actually
+uses, rather than a serialized blob in a single cell (which would be barely more
+than the JSON file it replaced). `save_state` rewrites both tables inside one
+transaction so the stored state is always an exact mirror of memory; the state is
+tiny, so a full rewrite is simpler and safer than diffing. Qdrant still runs
+embedded/on-disk (no Docker) for the app and `:memory:` for tests.

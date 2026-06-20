@@ -152,21 +152,28 @@ def test_full_resync_reprocesses_everything(pipeline):
 
 
 def test_sync_state_persists_across_processes(tmp_path, index, embedder):
-    """Persisted state makes a second 'process' a true no-op (watermark survives)."""
-    from eaip.index import SyncState
+    """A SQLite store makes a second 'process' a true no-op (watermark survives).
 
-    state_path = tmp_path / "sync_state.json"
+    Each ``SqliteStateStore`` opens the same DB file fresh, simulating separate
+    processes: the second pipeline reloads the watermark and does nothing.
+    """
+    from eaip.storage import SqliteStateStore
+
+    db_path = tmp_path / "eaip.db"
     conn = CorpusConnector(SourceType.CONFLUENCE, [make_doc("P-1", day=1), make_doc("P-2", day=2)])
 
-    # First "process": fresh state, full sync, persist.
-    p1 = IngestionPipeline(index, embedder, state=SyncState.load(state_path))
+    # First "process": fresh DB, full sync, state persisted by sync().
+    store1 = SqliteStateStore(db_path)
+    p1 = IngestionPipeline(index, embedder, store=store1)
     assert p1.sync(conn).upserted_docs == 2
-    p1.state.save(state_path)
+    store1.close()
 
-    # Second "process": reload state -> nothing to do.
-    p2 = IngestionPipeline(index, embedder, state=SyncState.load(state_path))
+    # Second "process": reopen the same DB -> watermark loaded -> nothing to do.
+    store2 = SqliteStateStore(db_path)
+    p2 = IngestionPipeline(index, embedder, store=store2)
     assert p2.sync(conn).upserted_docs == 0
     assert p2.sync(conn).deleted_docs == 0
+    store2.close()
 
 
 # --- Whole-corpus smoke -----------------------------------------------------
@@ -191,4 +198,4 @@ def test_per_source_watermarks_are_independent(pipeline, corpus_connectors):
     # Add a future-dated jira issue; only jira picks it up.
     jira.upsert(make_doc("JIRA-NEW", source=SourceType.JIRA, day=28, text="new issue body"))
     assert pipeline.sync(jira).upserted_docs == 1
-    assert pipeline.state.watermarks[SourceType.JIRA] == datetime(2026, 1, 28, 12, 0, tzinfo=UTC)
+    assert pipeline.state().watermarks[SourceType.JIRA] == datetime(2026, 1, 28, 12, 0, tzinfo=UTC)

@@ -77,10 +77,11 @@ uv run python scripts/ingest.py
 # ... Total indexed chunks: 30
 ```
 
-Run it again — it upserts **0** documents (the per-source watermark is persisted)
-and the chunk total stays flat (re-index updates rather than duplicates). To use
-real semantic embeddings instead: `EAIP_EMBEDDER=bge uv run python scripts/ingest.py`
-(downloads BGE-small on first run).
+Run it again — it upserts **0** documents (the per-source watermark is persisted
+in SQLite at `data/eaip.db`) and the chunk total stays flat (re-index updates
+rather than duplicates). To use real semantic embeddings instead:
+`EAIP_EMBEDDER=bge uv run python scripts/ingest.py` (downloads BGE-small on first
+run).
 
 ## Test
 
@@ -135,6 +136,7 @@ Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
 | Connectors, ACL model, structure-aware chunking | [`src/eaip/ingestion/`](src/eaip/ingestion/) |
 | Dense embeddings (hashing / BGE)         | [`src/eaip/embeddings/`](src/eaip/embeddings/) |
 | Qdrant index, ACL filter, ingestion pipeline | [`src/eaip/index/`](src/eaip/index/)      |
+| Storage abstraction (SQLite default, Postgres-swappable) | [`src/eaip/storage/`](src/eaip/storage/) |
 | Synthetic corpus + golden set            | [`scripts/generate_corpus.py`](scripts/generate_corpus.py), [`data/corpus/`](data/corpus/) |
 | Hybrid retrieval, RRF, reranking, citations | `src/eaip/retrieval/` _(Phase 2)_          |
 | LangGraph orchestration, supervisor + critic, HITL | `src/eaip/orchestration/` _(Phase 3)_ |

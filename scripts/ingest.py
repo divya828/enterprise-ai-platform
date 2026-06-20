@@ -16,14 +16,14 @@ from __future__ import annotations
 
 from eaip.config import get_settings
 from eaip.embeddings import get_embedder
-from eaip.index import ChunkIndex, IngestionPipeline, SyncState
+from eaip.index import ChunkIndex, IngestionPipeline
 from eaip.ingestion import connectors_from_corpus
+from eaip.storage import SqliteStateStore
 
 
 def main() -> None:
     settings = get_settings()
     corpus_path = settings.data_dir / "corpus" / "documents.json"
-    state_path = settings.qdrant_path / "sync_state.json"
 
     embedder = get_embedder(settings)
     index = ChunkIndex.open(
@@ -31,18 +31,19 @@ def main() -> None:
         collection=settings.qdrant_collection,
         dim=embedder.dim,
     )
-    # Load persisted sync state so the watermark survives across runs — a second
-    # run is then a genuine no-op rather than a full re-sync.
-    state = SyncState.load(state_path)
-    pipeline = IngestionPipeline(index, embedder, state=state)
+    # The SQLite state store persists watermarks across runs, so a second run is a
+    # genuine no-op rather than a full re-sync. (Same DB file later phases use.)
+    store = SqliteStateStore(settings.state_db_path)
+    pipeline = IngestionPipeline(index, embedder, store=store)
     connectors = connectors_from_corpus(corpus_path)
 
     print(f"Embedder: {embedder.name} (dim={embedder.dim})")
-    print(f"Index:    {settings.qdrant_path} / {settings.qdrant_collection}\n")
+    print(f"Index:    {settings.qdrant_path} / {settings.qdrant_collection}")
+    print(f"State:    {settings.state_db_path} (SQLite)\n")
     for report in pipeline.sync_all(connectors):
         print(report)
-    pipeline.state.save(state_path)
     print(f"\nTotal indexed chunks: {index.count()}")
+    store.close()
 
 
 if __name__ == "__main__":

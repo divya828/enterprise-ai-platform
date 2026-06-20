@@ -50,9 +50,10 @@ and all unit tests use.
             │   fetch_since(watermark)   current_ids()           │
             ▼                                                     │
    ┌──────────────────────── IngestionPipeline.sync() ───────────┘
-   │  for each changed doc:                         (SyncState: per-source
+   │  for each changed doc:                         (StateStore: per-source
    │    chunk_document(doc) ── ACL copied onto       watermark + indexed ids,
-   │      every chunk, deterministic ids             persisted to JSON)
+   │      every chunk, deterministic ids             persisted in SQLite —
+   │           │                                     normalized tables)
    │           │
    │           ▼
    │    embedder.embed_documents(texts)   ← hashing (default) | BGE (opt-in)
@@ -91,10 +92,14 @@ src/eaip/
 │   ├── factory.py         # get_embedder(settings)
 │   ├── hashing.py         # offline deterministic default
 │   └── bge.py             # sentence-transformers (opt-in, lazy import)
-└── index/                 # Phase 1: vectors -> Qdrant + the pipeline
-    ├── store.py           # ChunkIndex (Qdrant wrapper), ScoredChunk
-    ├── acl_filter.py      # access_filter(user, groups) -> Qdrant Filter
-    └── pipeline.py        # IngestionPipeline, SyncState, SyncReport
+├── index/                 # Phase 1: vectors -> Qdrant + the pipeline
+│   ├── store.py           # ChunkIndex (Qdrant wrapper), ScoredChunk
+│   ├── acl_filter.py      # access_filter(user, groups) -> Qdrant Filter
+│   └── pipeline.py        # IngestionPipeline, SyncReport
+└── storage/               # storage-layer abstraction (SQLite default)
+    ├── base.py            # StateStore Protocol + SyncState transfer object
+    ├── memory.py          # InMemoryStateStore (tests)
+    └── sqlite.py          # SqliteStateStore (normalized tables; app default)
 
 scripts/
 ├── generate_corpus.py     # regenerate the synthetic corpus + golden set

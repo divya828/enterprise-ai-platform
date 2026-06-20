@@ -95,6 +95,13 @@ class Settings(BaseSettings):
     )
     qdrant_collection: str = Field(default="eaip_chunks")
 
+    # --- State store (SQLite by default; Postgres-swappable) ---
+    state_db_path: Path = Field(
+        default=Path("./data/eaip.db"),
+        description="SQLite database file for durable platform state (ingestion watermarks, "
+        "and in later phases audit logs, prompt registry, tenant config).",
+    )
+
     # --- Runtime ---
     data_dir: Path = Field(default=Path("./data"))
     log_level: str = Field(default="INFO")
