@@ -18,12 +18,20 @@ from pydantic import BaseModel
 from eaip import __version__
 from eaip.config import get_settings
 from eaip.providers import LLMProvider, Message, Role, get_provider
+from eaip.retrieval import Principal
+from eaip.retrieval.service import RetrievalService
 
 
 @lru_cache
 def _provider() -> LLMProvider:
     """Cached provider dependency (constructed once per process)."""
     return get_provider()
+
+
+@lru_cache
+def _retrieval_service() -> RetrievalService:
+    """Cached retrieval service (opens the index + builds the stack once)."""
+    return RetrievalService.from_settings()
 
 
 def create_app() -> FastAPI:
@@ -67,6 +75,32 @@ def create_app() -> FastAPI:
             total_tokens=completion.usage.total_tokens,
         )
 
+    @app.post("/ask", tags=["retrieval"])
+    def ask(
+        req: AskRequest,
+        service: RetrievalService = Depends(_retrieval_service),
+    ) -> AskResponse:
+        """Answer a question with permission-aware, grounded RAG.
+
+        The request carries the asking principal (user + groups). Retrieval is
+        scoped to that principal's ACL, so the response can only cite documents
+        the user is allowed to see. (Phase 4 replaces the body-supplied principal
+        with authenticated identity + RBAC.)
+        """
+        principal = Principal.of(user=req.user, groups=req.groups)
+        result = service.ask(req.query, principal)
+        answer = result.answer
+        return AskResponse(
+            answer=answer.text,
+            abstained=answer.abstained,
+            top_score=round(answer.top_score, 4),
+            citations=[
+                CitationModel(label=c.label, doc_id=c.doc_id, title=c.title, source=c.source)
+                for c in answer.citations
+            ],
+            timings_ms={k: round(v, 2) for k, v in result.retrieval.timings_ms.items()},
+        )
+
     return app
 
 
@@ -84,6 +118,33 @@ class HelloResponse(BaseModel):
     provider: str
     model: str
     total_tokens: int
+
+
+class AskRequest(BaseModel):
+    """Input for ``/ask``: the question and the asking principal."""
+
+    query: str
+    user: str
+    groups: list[str] = []
+
+
+class CitationModel(BaseModel):
+    """A cited source passage (API shape)."""
+
+    label: int
+    doc_id: str
+    title: str
+    source: str
+
+
+class AskResponse(BaseModel):
+    """Grounded answer plus citations, abstention flag, and retrieval timings."""
+
+    answer: str
+    abstained: bool
+    top_score: float
+    citations: list[CitationModel]
+    timings_ms: dict[str, float]
 
 
 # Module-level app instance for `uvicorn eaip.app:app`.

@@ -160,3 +160,92 @@ than the JSON file it replaced). `save_state` rewrites both tables inside one
 transaction so the stored state is always an exact mirror of memory; the state is
 tiny, so a full rewrite is simpler and safer than diffing. Qdrant still runs
 embedded/on-disk (no Docker) for the app and `:memory:` for tests.
+
+---
+
+## Phase 2 — Retrieval (the RAG core)
+
+**Core concept: hybrid retrieval → RRF fusion → cross-encoder rerank.** This is
+the pipeline that turns a question into grounded evidence. *Dense* retrieval
+matches on meaning (vector similarity); *sparse* BM25 matches on exact terms
+(keyword overlap weighted by rarity). They fail differently — dense misses a rare
+acronym spelled out in the query; sparse misses a paraphrase that shares no words
+— so fusing both is more robust than either alone. The fused shortlist is then
+*reranked* by a cross-encoder and cut to top-k. Each stage is a separate module
+(`dense.py`, `sparse.py`, `fusion.py`, `reranker.py`, `pipeline.py`) so the data
+flow is legible and each concept is testable in isolation.
+
+**Why RRF, written out explicitly.** Dense scores live in roughly [-1, 1]; BM25
+scores are unbounded and much larger. You cannot add or average them — BM25 would
+swamp cosine. Reciprocal Rank Fusion throws the *scores* away and fuses on *rank
+position*: each result contributes `1 / (k + rank)` to its document, summed across
+the lists it appears in (`k≈60` damps the top ranks). A document near the top of
+*both* lists gets the biggest total — agreement between methods is the strongest
+relevance signal. We implemented the formula by hand (`fusion.py`) because seeing
+it is the point; a unit test asserts that a huge BM25 magnitude and a tiny cosine
+score at the same rank contribute *equally*.
+
+**The bi-encoder → cross-encoder shortlist pattern (the core efficiency trade).**
+Dense and sparse are *bi-encoders*: query and document are embedded
+independently, so retrieval is a fast nearest-neighbour lookup but the model never
+sees them together. A *cross-encoder* scores the (query, document) pair jointly —
+far more accurate, but it must run once per candidate, too slow over a whole
+corpus. Resolution: retrieve a cheap top-N shortlist, rerank only that shortlist,
+keep top-k. We measure and return per-stage latency (`timings_ms`) so the cost of
+reranking is visible — that's the whole reason it runs on N≈20, not the full
+index. A test asserts the reranker only ever sees the shortlist and that
+`rerank_ms` is reported.
+
+**Edge case — permission-aware retrieval, applied to BOTH arms before ranking.**
+The single permission gate is one `access_filter(user, groups)` computed from the
+principal and passed to *both* the dense search and the BM25 corpus build. Dense
+filtering happens inside Qdrant's ANN (candidates constrained before scoring); for
+sparse, the BM25 corpus is built from *only the permitted chunks* (pulled via
+`scroll_chunks` with the same filter), so a forbidden chunk never enters the
+corpus, never influences IDF, and can never be returned. This is *filter-before*,
+not *filter-after* — the safe posture. Tested end to end and through each arm
+independently: an `everyone` user can never retrieve a `finance`-only doc, and a
+user-restricted doc (Project Falcon) is visible only to the named users.
+
+**Edge case — permission freshness / revocation.** Because the ACL is stored on
+each chunk's payload and read at query time, changing a doc's ACL takes effect as
+soon as the doc is re-indexed — there's no separate "who can see what" structure
+to fall out of sync. The revocation test makes a doc finance-only and confirms an
+ex-viewer immediately loses access while a finance user keeps it. **A real bug
+this surfaced (worth the scar):** the first version of the test set the
+revocation's `last_modified` *below* the source's watermark, so the incremental
+sync skipped it and the ACL never updated. The lesson is genuine, not a test
+artifact: **a content watermark only re-indexes docs whose timestamp advances**,
+so an ACL change must bump `last_modified` (as a real edit does) or it will be
+missed. Documented in the test and noted here as a known watermark caveat.
+
+**Edge case — low confidence → "I don't know" (abstention).** Before calling the
+LLM at all, the answerer checks the top reranked score against a configurable
+threshold (and that any chunk survived ACL filtering). Below it, we return a fixed
+"I don't know" and never call the model — so weak/empty evidence can't be spun
+into a hallucination, and the answer-vs-abstain decision is deterministic and
+testable without a real LLM. A non-finance user asking a finance question retrieves
+no permitted evidence → abstains, which is both the safe and the honest outcome.
+
+**Grounding + the seed of Phase 6.** The prompt presents each chunk with a numbered
+label and asks the model to cite the labels it used; we return those as structured
+`Citation`s (provenance you can trace). The retrieved context is fenced in a
+`CONTEXT` block and the system prompt says to treat it as *data, never as
+instructions* — the baseline separation that Phase 6's prompt-injection defenses
+build on. A test asserts the fencing and the instruction are present.
+
+**Decision/tradeoff — offline lexical reranker default.** Same pattern as the
+embedder and LLM provider: the default reranker is a deterministic lexical-overlap
+scorer (`EAIP_RERANKER=lexical`) so the shortlist→rerank flow and latency
+accounting run in CI with no model download; `EAIP_RERANKER=bge` swaps in a real
+BGE cross-encoder for quality. Note: with the offline hashing embedder + lexical
+reranker, ranking *quality* is modest (the architecture doc doesn't always rank
+first) — that's expected and is exactly what `baseline_vs_improved.py` in Phase 5
+will quantify. Phase 2 proves the machinery is correct; the real models supply the
+quality.
+
+**Decision/tradeoff — rebuild the BM25 corpus per query.** `rank_bm25` scores an
+in-memory corpus, so we rebuild it from the permitted chunks on each query. At
+this scale that's trivial and keeps permissions trivially correct (always exactly
+the caller's permitted set). A production system would cache a per-tenant sparse
+index and invalidate it on ACL/content changes — noted as the scale path.

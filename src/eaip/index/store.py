@@ -140,6 +140,31 @@ class ChunkIndex:
             for p in response.points
         ]
 
+    def scroll_chunks(
+        self, *, acl_filter: qm.Filter | None = None, batch_size: int = 256
+    ) -> list[Chunk]:
+        """Return all chunks (optionally ACL-filtered), ignoring vector similarity.
+
+        Used to build the sparse/BM25 corpus from exactly the chunks a principal
+        may see. ``scroll`` paginates with an offset cursor; we drain it fully.
+        At this learning scale the whole permitted set fits comfortably in memory.
+        """
+        chunks: list[Chunk] = []
+        offset = None
+        while True:
+            points, offset = self._client.scroll(
+                collection_name=self._collection,
+                scroll_filter=acl_filter,
+                with_payload=True,
+                with_vectors=False,
+                limit=batch_size,
+                offset=offset,
+            )
+            chunks.extend(_chunk_from_payload(p.payload) for p in points)
+            if offset is None:
+                break
+        return chunks
+
 
 def _payload(chunk: Chunk) -> dict:
     """Serialize a chunk to a Qdrant payload (ACL lists are stored explicitly)."""

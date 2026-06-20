@@ -18,8 +18,9 @@ roadmap).
 
 ## Status
 
-Built in phases (0–6). **Phases 0–1 are complete** (scaffolding; ingestion +
-connectors). See [PROJECT_PLAN.md](PROJECT_PLAN.md) for what each phase delivers.
+Built in phases (0–6). **Phases 0–2 are complete** (scaffolding; ingestion +
+connectors; retrieval — the RAG core). See [PROJECT_PLAN.md](PROJECT_PLAN.md) for
+what each phase delivers.
 
 ## Prerequisites
 
@@ -83,6 +84,28 @@ rather than duplicates). To use real semantic embeddings instead:
 `EAIP_EMBEDDER=bge uv run python scripts/ingest.py` (downloads BGE-small on first
 run).
 
+### Ask a question — permission-aware grounded RAG (Phase 2)
+
+After ingesting, ask the corpus a question *as a given principal*. Retrieval is
+hybrid (dense + sparse, fused with RRF, reranked) and scoped to the principal's
+ACL, so the answer can only cite documents that user may see:
+
+```bash
+uv run python scripts/ask.py "how do I set up the vpn" --groups everyone
+
+# Permission isolation in action — same question, different principals:
+uv run python scripts/ask.py "what is the FY26 revenue forecast" \
+  --user intern@acme.test --groups everyone     # cannot cite the finance doc
+uv run python scripts/ask.py "what is the FY26 revenue forecast" \
+  --user cfo@acme.test --groups finance         # reaches CONF-7
+```
+
+Or over HTTP (`POST /ask`): `{"query": "...", "user": "...", "groups": [...]}`
+returns the grounded answer, citations, an `abstained` flag (true when evidence
+is too weak → "I don't know"), and per-stage retrieval `timings_ms` (note the
+reranking cost). The defaults run offline; `EAIP_RERANKER=bge` and a real LLM
+provider give production-grade quality.
+
 ## Test
 
 ```bash
@@ -138,7 +161,7 @@ Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
 | Qdrant index, ACL filter, ingestion pipeline | [`src/eaip/index/`](src/eaip/index/)      |
 | Storage abstraction (SQLite default, Postgres-swappable) | [`src/eaip/storage/`](src/eaip/storage/) |
 | Synthetic corpus + golden set            | [`scripts/generate_corpus.py`](scripts/generate_corpus.py), [`data/corpus/`](data/corpus/) |
-| Hybrid retrieval, RRF, reranking, citations | `src/eaip/retrieval/` _(Phase 2)_          |
+| Hybrid retrieval, RRF, cross-encoder rerank, grounded citations, "I don't know" | [`src/eaip/retrieval/`](src/eaip/retrieval/) |
 | LangGraph orchestration, supervisor + critic, HITL | `src/eaip/orchestration/` _(Phase 3)_ |
 | Multi-tenancy, RBAC, audit, prompt registry | `src/eaip/platform/` _(Phase 4)_           |
 | Tracing + evaluation harness             | `src/eaip/observability/`, `evals/` _(Phase 5)_ |

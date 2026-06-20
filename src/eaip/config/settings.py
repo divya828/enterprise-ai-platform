@@ -46,6 +46,17 @@ class EmbedderName(StrEnum):
     BGE = "bge"
 
 
+class RerankerName(StrEnum):
+    """Supported rerankers, selected via ``EAIP_RERANKER``.
+
+    ``lexical`` is offline + deterministic (default, used by tests). ``bge`` is a
+    real cross-encoder for actual relevance quality.
+    """
+
+    LEXICAL = "lexical"
+    BGE = "bge"
+
+
 class Settings(BaseSettings):
     """All runtime configuration in one validated object.
 
@@ -87,6 +98,26 @@ class Settings(BaseSettings):
         description="Vector dimension for the hashing embedder (ignored by BGE).",
     )
     bge_model: str = Field(default="BAAI/bge-small-en-v1.5")
+
+    # --- Retrieval / reranking ---
+    reranker: RerankerName = Field(
+        default=RerankerName.LEXICAL,
+        description="Reranker backend. Defaults to the offline lexical reranker.",
+    )
+    bge_reranker_model: str = Field(default="BAAI/bge-reranker-base")
+    retrieval_shortlist: int = Field(
+        default=20,
+        description="Top-N candidates pulled from each retrieval arm and fed to the reranker.",
+    )
+    retrieval_top_k: int = Field(
+        default=5,
+        description="Final number of reranked chunks used to ground the answer.",
+    )
+    answer_min_score: float = Field(
+        default=0.05,
+        description="Minimum top reranked score to attempt an answer; below it, abstain "
+        "('I don't know') instead of grounding on weak context.",
+    )
 
     # --- Vector store (Qdrant) ---
     qdrant_path: Path = Field(

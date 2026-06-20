@@ -43,6 +43,29 @@ def corpus_connectors() -> dict[SourceType, CorpusConnector]:
     return connectors_from_corpus(CORPUS_PATH)
 
 
+@pytest.fixture
+def ingested_index(index: ChunkIndex, embedder: HashingEmbedder) -> ChunkIndex:
+    """An in-memory index with the full synthetic corpus ingested."""
+    pipe = IngestionPipeline(index, embedder)
+    pipe.sync_all(connectors_from_corpus(CORPUS_PATH))
+    return index
+
+
+@pytest.fixture
+def retriever(ingested_index: ChunkIndex, embedder: HashingEmbedder):
+    """A HybridRetriever over the ingested corpus with the offline reranker."""
+    from eaip.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
+    from eaip.retrieval.reranker import LexicalReranker
+
+    return HybridRetriever(
+        dense=DenseRetriever(ingested_index, embedder),
+        sparse=SparseRetriever(ingested_index),
+        reranker=LexicalReranker(),
+        shortlist=20,
+        top_k=5,
+    )
+
+
 def make_doc(
     doc_id: str,
     *,

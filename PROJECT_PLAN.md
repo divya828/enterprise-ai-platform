@@ -54,12 +54,16 @@ deletions/tombstones (deleting a source doc removes all its chunks → not
 retrievable); re-index updates rather than duplicates (deterministic ids; stale
 chunks cleared when a doc shrinks); ACL metadata surviving onto every chunk.
 
-### Phase 2 — Retrieval (the RAG core)
-Dense + sparse/BM25 retrieval, explicit RRF fusion, cross-encoder reranking of
-the fused shortlist, grounded answers with citations.
-**Edge cases:** permission-aware retrieval (no leakage); permission
-freshness/revocation; low-confidence → "I don't know" instead of hallucinating;
-reranking only on the shortlist with latency logged.
+### Phase 2 — Retrieval (the RAG core) ✅ (complete)
+Dense + sparse/BM25 retrieval, explicit RRF fusion (hand-written), cross-encoder
+reranking of the fused shortlist (lexical default, BGE opt-in), grounded answers
+with numbered citations, and a `/ask` endpoint scoped to a principal.
+**Edge cases (handled + tested):** permission-aware retrieval applied to BOTH
+arms *before* ranking (no leakage — tested via the pipeline and each arm);
+permission freshness/revocation reflected after re-index (with the watermark
+caveat documented); low-confidence/no-permitted-context → "I don't know" without
+calling the LLM; reranking only on the top-N shortlist with per-stage latency
+logged.
 
 ### Phase 3 — Orchestration
 LangGraph graph (plan → retrieve → answer) with explicit state + checkpointer;

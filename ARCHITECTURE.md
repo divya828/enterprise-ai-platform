@@ -101,9 +101,52 @@ src/eaip/
     ├── memory.py          # InMemoryStateStore (tests)
     └── sqlite.py          # SqliteStateStore (normalized tables; app default)
 
+├── retrieval/             # Phase 2: query -> grounded, cited answer
+│   ├── dense.py           # DenseRetriever (ACL-filtered vector search)
+│   ├── sparse.py          # SparseRetriever (BM25 over ACL-permitted chunks)
+│   ├── fusion.py          # reciprocal_rank_fusion (explicit RRF)
+│   ├── reranker.py        # Reranker Protocol + Lexical (default) / CrossEncoder
+│   ├── reranker_factory.py
+│   ├── pipeline.py        # HybridRetriever, Principal, RetrievalResult
+│   ├── answerer.py        # GroundedAnswerer (citations + "I don't know" gate)
+│   └── service.py         # RetrievalService composition root (.ask)
+└── storage/               # storage-layer abstraction (SQLite default)
+    ├── base.py            # StateStore Protocol + SyncState transfer object
+    ├── memory.py          # InMemoryStateStore (tests)
+    └── sqlite.py          # SqliteStateStore (normalized tables; app default)
+
 scripts/
 ├── generate_corpus.py     # regenerate the synthetic corpus + golden set
-└── ingest.py              # run a full ingest into embedded Qdrant
+├── ingest.py              # run a full ingest into embedded Qdrant
+└── ask.py                 # query the corpus as a principal (Phase 2 demo)
+```
+
+## Phase 2 — retrieval flow
+
+```
+   query + Principal(user, groups)
+            │
+            ▼
+   access_filter(user, groups)  ──────────── one ACL gate, applied to BOTH arms
+            │                                  (filter-before-rank: forbidden
+            ├───────────────┬──────────────┐   chunks never enter either set)
+            ▼               ▼              ...
+   DenseRetriever      SparseRetriever
+   (embed query →      (BM25 over the
+    ACL-filtered ANN    ACL-permitted
+    in Qdrant)          corpus only)
+            │  top-N         │  top-N
+            └──────┬─────────┘
+                   ▼
+        reciprocal_rank_fusion({dense, bm25})   ← rank-based, scale-free
+                   │  fused shortlist (top-N)
+                   ▼
+        Reranker.rerank(query, shortlist)       ← cross-encoder cost; timed
+                   │  top-k
+                   ▼
+        GroundedAnswerer.answer()
+          ├─ top_score < threshold OR no chunks → "I don't know" (LLM not called)
+          └─ else → LLM with fenced CONTEXT + numbered passages → answer + citations
 ```
 
 ## Target shape (phases 1–6, for orientation)
