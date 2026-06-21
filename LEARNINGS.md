@@ -360,3 +360,96 @@ spec asks for the argument I can now make from having built this:
   framework only for a *bounded* sub-task where emergent dialogue is the point —
   invoked as one node inside the graph, never as the backbone. Control at the
   edges, creativity in a sandbox.
+
+---
+
+## Phase 4 — Platform capabilities
+
+**Core concept: governance layered on the engine.** Phases 0–3 built the engine
+(provider, RAG, agent). Phase 4 adds the platform *governance* a real enterprise
+needs around it: who is this request for (tenancy), are they allowed (RBAC), what
+did they do (audit), which prompt/agent version is live (registries + lifecycle),
+and are they within their budget (rate limits + token budgets + cost attribution).
+The unifying idea is that these are **cross-cutting concerns composed in one
+place** (`eaip/platform/`) and enforced uniformly, not sprinkled across handlers.
+
+**Multi-tenancy via collection-per-tenant (the isolation decision).** Each tenant
+gets its own Qdrant collection (`<prefix>__<tenant_id>`), resolved per request by
+an `IndexResolver` from `principal.tenant`. This is *physical* isolation: a query
+runs against one tenant's collection, so it cannot return another tenant's chunks
+even if the ACL filter had a bug — the other tenant's vectors simply aren't there.
+The alternative — one collection with a `tenant_id` payload filter — is lighter to
+operate (no per-tenant collection lifecycle) but relies on every query remembering
+the filter, so a single missed filter leaks across tenants. We chose
+collection-per-tenant for defense in depth; a cost-sensitive deployment with
+thousands of small tenants might prefer the payload-filter approach (fewer
+collections) and lean on rigorous filter-injection + tests instead. Tested: two
+tenants ingested into separate collections, and a retrieval as tenant A cannot
+surface tenant B's docs (and vice versa).
+
+**Refactor worth noting — the index became a *resolver*.** Making retrieval
+tenant-aware meant `HybridRetriever` could no longer hold one fixed index; it now
+takes an `IndexResolver` and resolves the tenant's index per call. A
+`SingleIndexResolver` (returns one index for every tenant) keeps the single-tenant
+tests simple while exercising the same seam. This is the cost of retrofitting a
+cross-cutting dimension (tenancy) late — better to thread the dimension through
+from the start, but the resolver kept the blast radius to the construction sites.
+
+**RBAC = "may they do this?", distinct from ACL = "may they see this?".** Three
+ordered roles (viewer < builder < admin) map to capabilities (ask, manage
+prompts/agents, approve, view audit, manage tenant). A role has a capability if
+its rank ≥ the capability's required rank. Enforced at *two* layers (defense in
+depth): the API boundary (`require(...)` → 403) and retrieval (even an authorized
+role is still bound by tenant + per-document ACL — RBAC gates *operations*, it
+never *widens* data access). Fail-closed: an unrecognized role has no privileges,
+so a bad role at the boundary is a clean 403, not a 500 (a bug the API test
+caught). Tested: a viewer is denied prompt management; an invalid role is denied
+`/ask`.
+
+**Append-only audit log.** Every governed action (ask, prompt add/rollback, agent
+create/transition) writes an `AuditEvent` (tenant, actor, action, target, detail,
+timestamp). The store interface has **no update or delete** — only append + read —
+which is what makes the log trustworthy after the fact. Tenant-scoped reads. The
+registries write audit events as part of each mutation, so the trail can't be
+forgotten by a handler. Tested: append-only (no mutate/delete methods exist),
+newest-first, tenant-scoped.
+
+**Prompt registry with versioning + rollback.** Changing a prompt changes model
+behavior, so prompts are versioned: `add_version` appends an immutable version and
+pins it active; `pin` (rollback) re-points "active" at any earlier version;
+`history` lists all. This is what lets the Phase 5 eval gate fail a regressing
+prompt and lets an operator roll back in one step. Tenant-scoped and
+RBAC-gated. Tested: add → add → rollback restores the earlier text, history
+intact.
+
+**Agent definitions + a validated lifecycle.** The "define an agent, the runtime
+executes it" abstraction: a tenant-scoped record (name, prompt, tools, state).
+State follows draft → test → published → deprecated, with transitions validated
+against an explicit allowed-transitions map (e.g. draft→published is rejected; you
+must pass through test). This keeps an unvalidated agent from serving traffic and
+retires one safely. Tested: happy path and a rejected illegal transition.
+
+**Rate limits, token budgets, cost attribution.** Two complementary controls per
+tenant: a sliding-window **request rate limit** (in-memory, protects
+latency/throughput from a burst) and a daily **token budget** (durable, protects
+cost). Over either, the request is throttled (HTTP 429). The same per-tenant daily
+usage counters that enforce the budget *are* the cost-attribution data (tokens ×
+price = spend). The rate-limit clock is injectable so the sliding window is tested
+with a fake clock (no real waiting). Tested: rate-limit throttle + window slide,
+budget throttle, both per-tenant, and 429s surfaced over HTTP.
+
+**Decision/tradeoff — Principal moved to a leaf module.** Both `retrieval` and
+`platform` need the security context (`Principal`), and having it live in
+`retrieval.pipeline` while `platform.registry` imported it created a circular
+import (retrieval → index.resolver → platform → registry → retrieval). The fix was
+to move `Principal` to a dependency-free `eaip/security.py` leaf that both layers
+import. Lesson: a type used across sibling packages belongs *below* both, not
+inside one of them.
+
+**Known limitation (documented honestly).** The ingestion `SyncState` watermark is
+*global*, not per-tenant, so ingesting a second tenant after the first sees the
+first's watermark and skips (the second tenant's collection is correctly created
+and isolated, but stays empty in the shared-corpus demo). A real multi-tenant
+ingest would key the watermark by `(tenant, source)`. The vector isolation is
+correct; the sync bookkeeping is the gap — noted as the next step if multi-tenant
+ingest were taken further.

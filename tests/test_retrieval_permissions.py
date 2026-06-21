@@ -71,8 +71,9 @@ def test_revocation_is_reflected_after_reindex(index, embedder):
     timestamp (as a real edit does). We use a dedicated single-doc connector so
     the watermark is governed entirely by this document's own timestamps.
     """
+    from eaip.index.resolver import SingleIndexResolver
     from eaip.ingestion import CorpusConnector
-    from eaip.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
+    from eaip.retrieval import HybridRetriever
     from eaip.retrieval.reranker import LexicalReranker
 
     text = "\n\n".join(f"sensitive quarterly figure {i} revenue" for i in range(8))
@@ -86,8 +87,8 @@ def test_revocation_is_reflected_after_reindex(index, embedder):
     pipe.sync(conn)
 
     retr = HybridRetriever(
-        DenseRetriever(index, embedder),
-        SparseRetriever(index),
+        SingleIndexResolver(index),
+        embedder,
         LexicalReranker(),
         shortlist=20,
         top_k=10,

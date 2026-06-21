@@ -124,7 +124,11 @@ class Settings(BaseSettings):
         default=Path("./data/qdrant"),
         description="On-disk path for the embedded Qdrant store. Use ':memory:' for ephemeral.",
     )
-    qdrant_collection: str = Field(default="eaip_chunks")
+    qdrant_collection: str = Field(
+        default="eaip_chunks",
+        description="Collection name *prefix*. Each tenant gets its own collection "
+        "named '<prefix>__<tenant_id>' for physical isolation (Phase 4).",
+    )
 
     # --- State store (SQLite by default; Postgres-swappable) ---
     state_db_path: Path = Field(
@@ -157,6 +161,20 @@ class Settings(BaseSettings):
     approval_ttl_s: float = Field(
         default=3600.0,
         description="How long a pending HITL approval stays valid before it expires.",
+    )
+
+    # --- Platform capabilities (Phase 4) ---
+    default_tenant: str = Field(
+        default="acme",
+        description="Tenant id used when a request doesn't specify one (single-tenant dev).",
+    )
+    tenant_requests_per_minute: int = Field(
+        default=60,
+        description="Default per-tenant request rate limit (requests/min).",
+    )
+    tenant_daily_token_budget: int = Field(
+        default=1_000_000,
+        description="Default per-tenant daily token budget; over it, requests are throttled.",
     )
 
     # --- Runtime ---

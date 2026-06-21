@@ -86,14 +86,21 @@ Only if requested. A standalone `spikes/autogen/` script (not wired into the
 platform, not a dependency, not in CI) to feel the conversational-collaboration
 paradigm, contrasted with the LangGraph supervisor/critic approach in LEARNINGS.
 
-### Phase 4 — Platform capabilities
-Multi-tenancy (tenant-scoped namespaces/filters, per-tenant config + rate limits
-+ token budgets + cost attribution); RBAC (viewer/builder/admin at API and
-retrieval); append-only audit log; prompt registry with versioning
-(history/pin/rollback); agent-definition abstraction + lifecycle states
-(draft → test → published → deprecated).
-**Edge cases:** no config/data bleed across tenants; budget throttling;
-unauthorized role denied; prompt rollback works.
+### Phase 4 — Platform capabilities ✅ (complete)
+Multi-tenancy (per-tenant Qdrant collection, tenant-scoped state; per-tenant rate
+limits + daily token budgets + cost attribution); RBAC (viewer/builder/admin
+enforced at the API boundary AND at retrieval); append-only audit log; prompt
+registry with versioning (history/pin/rollback); agent-definition abstraction +
+validated lifecycle states (draft → test → published → deprecated). `/ask` runs a
+governance pipeline (RBAC → limits → retrieve → usage + audit). Demo:
+`scripts/governance.py`.
+**Edge cases (handled + tested):** no data bleed across tenants (separate
+collections, proven both directions); rate-limit + token-budget throttling (429,
+fake-clock window); unauthorized/invalid role denied (403, fail-closed); prompt
+rollback restores an earlier version; illegal lifecycle transition rejected; audit
+log is append-only (no update/delete) and tenant-scoped.
+**Known limitation:** the ingest watermark is global, not per-tenant (documented
+in LEARNINGS) — vector isolation is correct, sync bookkeeping is the gap.
 
 ### Phase 5 — Observability & evaluation
 Structured tracing (trace id stitching a multi-agent run; latency/token/cost per

@@ -12,13 +12,11 @@ from dataclasses import dataclass
 
 from eaip.config import Settings, get_settings
 from eaip.embeddings import get_embedder
-from eaip.index.store import ChunkIndex
+from eaip.index.resolver import TenantIndexResolver
 from eaip.providers import get_provider
 from eaip.retrieval.answerer import Answer, GroundedAnswerer
-from eaip.retrieval.dense import DenseRetriever
 from eaip.retrieval.pipeline import HybridRetriever, Principal, RetrievalResult
 from eaip.retrieval.reranker_factory import get_reranker
-from eaip.retrieval.sparse import SparseRetriever
 
 
 @dataclass(frozen=True)
@@ -30,10 +28,9 @@ class AskResult:
 
 
 class RetrievalService:
-    """Composition root: hybrid retrieval + grounded answering, configured."""
+    """Composition root: tenant-aware hybrid retrieval + grounded answering."""
 
-    def __init__(self, index: ChunkIndex, retriever: HybridRetriever, answerer: GroundedAnswerer):
-        self._index = index
+    def __init__(self, retriever: HybridRetriever, answerer: GroundedAnswerer):
         self._retriever = retriever
         self._answerer = answerer
 
@@ -51,20 +48,20 @@ class RetrievalService:
     def from_settings(cls, settings: Settings | None = None) -> RetrievalService:
         settings = settings or get_settings()
         embedder = get_embedder(settings)
-        index = ChunkIndex.open(
+        resolver = TenantIndexResolver(
             path=str(settings.qdrant_path),
-            collection=settings.qdrant_collection,
+            collection_prefix=settings.qdrant_collection,
             dim=embedder.dim,
         )
         retriever = HybridRetriever(
-            dense=DenseRetriever(index, embedder),
-            sparse=SparseRetriever(index),
-            reranker=get_reranker(settings),
+            resolver,
+            embedder,
+            get_reranker(settings),
             shortlist=settings.retrieval_shortlist,
             top_k=settings.retrieval_top_k,
         )
         answerer = GroundedAnswerer(get_provider(settings), min_score=settings.answer_min_score)
-        return cls(index, retriever, answerer)
+        return cls(retriever, answerer)
 
     def retrieve(self, query: str, principal: Principal) -> RetrievalResult:
         return self._retriever.retrieve(query, principal)

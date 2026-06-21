@@ -18,10 +18,11 @@ roadmap).
 
 ## Status
 
-Built in phases (0–6). **Phases 0–3 are complete** (scaffolding; ingestion +
-connectors; retrieval — the RAG core; orchestration — LangGraph agent with
-supervisor/critic, memory tiers, safety limits, and durable HITL). See
-[PROJECT_PLAN.md](PROJECT_PLAN.md) for what each phase delivers.
+Built in phases (0–6). **Phases 0–4 are complete** (scaffolding; ingestion +
+connectors; retrieval — the RAG core; orchestration — LangGraph agent; platform
+capabilities — multi-tenancy, RBAC, audit, prompt registry, agent lifecycle,
+rate limits/budgets/cost attribution). See [PROJECT_PLAN.md](PROJECT_PLAN.md) for
+what each phase delivers.
 
 ## Prerequisites
 
@@ -176,6 +177,27 @@ responses (plain text or simulated tool calls) and it replays them in order, so
 orchestration and edge-case tests are fully deterministic with no model. See
 `src/eaip/providers/stub.py`.
 
+## Platform capabilities (Phase 4)
+
+Multi-tenancy, RBAC, an append-only audit log, a versioned prompt registry, and
+agent lifecycle states. A self-contained, offline demo:
+
+```bash
+uv run python scripts/governance.py
+# RBAC: viewer denied a builder-only edit; prompt rollback to v1; agent
+# draft→test→published (illegal jump rejected); tenant isolation; audit trail.
+```
+
+These are also enforced on `POST /ask`: requests carry `tenant` and `role`; the
+endpoint checks RBAC (403 on insufficient role), per-tenant rate limit + daily
+token budget (429 when throttled), then records token usage (cost attribution)
+and an append-only audit event. Ingestion is tenant-scoped — each tenant's
+vectors live in their own Qdrant collection:
+
+```bash
+uv run python scripts/ingest.py --tenant acme     # → collection eaip_chunks__acme
+```
+
 ## Concept map
 
 Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
@@ -193,7 +215,8 @@ Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
 | Hybrid retrieval, RRF, cross-encoder rerank, grounded citations, "I don't know" | [`src/eaip/retrieval/`](src/eaip/retrieval/) |
 | LangGraph agent: supervisor + critic, memory tiers, loop safety, durable HITL | [`src/eaip/orchestration/`](src/eaip/orchestration/) |
 | Memory tiers (episodic + procedural) in the SQLite store | [`src/eaip/storage/`](src/eaip/storage/) |
-| Multi-tenancy, RBAC, audit, prompt registry | `src/eaip/platform/` _(Phase 4)_           |
+| Multi-tenancy, RBAC, audit, prompt registry, agent lifecycle, rate limits/budgets | [`src/eaip/platform/`](src/eaip/platform/) |
+| Security context (Principal) shared across layers | [`src/eaip/security.py`](src/eaip/security.py) |
 | Tracing + evaluation harness             | `src/eaip/observability/`, `evals/` _(Phase 5)_ |
 | Prompt-injection defenses, red-team suite | `src/eaip/security/`, `tests/redteam/` _(Phase 6)_ |
 

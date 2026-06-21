@@ -53,14 +53,20 @@ def ingested_index(index: ChunkIndex, embedder: HashingEmbedder) -> ChunkIndex:
 
 @pytest.fixture
 def retriever(ingested_index: ChunkIndex, embedder: HashingEmbedder):
-    """A HybridRetriever over the ingested corpus with the offline reranker."""
-    from eaip.retrieval import DenseRetriever, HybridRetriever, SparseRetriever
+    """A HybridRetriever over the ingested corpus with the offline reranker.
+
+    Uses a SingleIndexResolver so every tenant resolves to the one in-memory
+    index — keeps single-tenant retrieval tests simple while exercising the
+    resolver seam.
+    """
+    from eaip.index.resolver import SingleIndexResolver
+    from eaip.retrieval import HybridRetriever
     from eaip.retrieval.reranker import LexicalReranker
 
     return HybridRetriever(
-        dense=DenseRetriever(ingested_index, embedder),
-        sparse=SparseRetriever(ingested_index),
-        reranker=LexicalReranker(),
+        SingleIndexResolver(ingested_index),
+        embedder,
+        LexicalReranker(),
         shortlist=20,
         top_k=5,
     )

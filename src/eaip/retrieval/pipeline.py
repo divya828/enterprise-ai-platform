@@ -23,28 +23,17 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
+from eaip.embeddings.base import Embedder
 from eaip.index.acl_filter import access_filter
+from eaip.index.resolver import IndexResolver
 from eaip.index.store import ScoredChunk
 from eaip.retrieval.dense import DenseRetriever
 from eaip.retrieval.fusion import FusedChunk, reciprocal_rank_fusion
 from eaip.retrieval.reranker import Reranker
 from eaip.retrieval.sparse import SparseRetriever
+from eaip.security import Principal  # re-exported for callers that import it from here
 
-
-@dataclass(frozen=True)
-class Principal:
-    """The identity a retrieval request is made on behalf of.
-
-    Retrieval is always scoped to a principal — there is no "search as everyone".
-    The ``groups`` drive the ACL filter alongside the ``user`` id.
-    """
-
-    user: str
-    groups: frozenset[str] = frozenset()
-
-    @classmethod
-    def of(cls, user: str, groups: list[str] | None = None) -> Principal:
-        return cls(user=user, groups=frozenset(groups or ()))
+__all__ = ["Principal", "RetrievalResult", "HybridRetriever"]
 
 
 @dataclass(frozen=True)
@@ -64,19 +53,25 @@ class RetrievalResult:
 
 
 class HybridRetriever:
-    """Dense + sparse retrieval, RRF fusion, and cross-encoder reranking."""
+    """Dense + sparse retrieval, RRF fusion, and cross-encoder reranking.
+
+    Tenant-aware: it resolves the requesting principal's *own* index (its isolated
+    Qdrant collection) per call via an :class:`IndexResolver`, then runs both
+    retrieval arms against it. Tenant isolation is therefore structural — a
+    request can only ever search its tenant's collection.
+    """
 
     def __init__(
         self,
-        dense: DenseRetriever,
-        sparse: SparseRetriever,
+        resolver: IndexResolver,
+        embedder: Embedder,
         reranker: Reranker,
         *,
         shortlist: int = 20,
         top_k: int = 5,
     ) -> None:
-        self._dense = dense
-        self._sparse = sparse
+        self._resolver = resolver
+        self._embedder = embedder
         self._reranker = reranker
         self._shortlist = shortlist
         self._top_k = top_k
@@ -84,13 +79,18 @@ class HybridRetriever:
     def retrieve(self, query: str, principal: Principal) -> RetrievalResult:
         """Run the full hybrid pipeline for ``query`` as ``principal``."""
         timings: dict[str, float] = {}
-        # One ACL filter, applied to both arms — the single permission gate.
+        # Resolve THIS tenant's index — the structural isolation boundary.
+        index = self._resolver.for_tenant(principal.tenant)
+        dense = DenseRetriever(index, self._embedder)
+        sparse = SparseRetriever(index)
+        # One ACL filter, applied to both arms — the per-user permission gate
+        # (inside the already tenant-isolated collection).
         acl = access_filter(user=principal.user, groups=principal.groups)
 
         with _timed(timings, "dense_ms"):
-            dense_hits = self._dense.search(query, limit=self._shortlist, acl_filter=acl)
+            dense_hits = dense.search(query, limit=self._shortlist, acl_filter=acl)
         with _timed(timings, "sparse_ms"):
-            sparse_hits = self._sparse.search(query, limit=self._shortlist, acl_filter=acl)
+            sparse_hits = sparse.search(query, limit=self._shortlist, acl_filter=acl)
 
         with _timed(timings, "fusion_ms"):
             fused = reciprocal_rank_fusion({"dense": dense_hits, "bm25": sparse_hits})

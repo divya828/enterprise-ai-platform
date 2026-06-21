@@ -118,16 +118,50 @@ src/eaip/
 │   ├── graph.py           # StateGraph wiring + HITL interrupt + conditional edges
 │   ├── runner.py          # AgentRunner (compile w/ checkpointer, run, resume)
 │   └── service.py         # build_runner_cm composition root (durable checkpointer)
+├── platform/              # Phase 4: governance (tenancy, RBAC, registries, limits)
+│   ├── tenancy.py         # collection_for_tenant, validate_tenant_id
+│   ├── rbac.py            # Role/Capability + can()/require() (viewer<builder<admin)
+│   ├── registry.py        # PromptRegistry + AgentRegistry (RBAC + audit + lifecycle)
+│   └── limits.py          # RateLimiter + TokenBudget (per-tenant; cost attribution)
+├── security.py            # Principal (security context; leaf, no package deps)
 └── storage/               # storage-layer abstraction (SQLite default)
-    ├── base.py            # StateStore/EpisodicStore/ProceduralStore + transfer objects
+    ├── base.py            # all store interfaces + transfer objects
     ├── memory.py          # in-memory backends (tests)
-    └── sqlite.py          # SQLite backend: sync state + episodic + procedural memory
+    └── sqlite.py          # SQLite backend: state + memory + audit + prompts + agents + usage
 
 scripts/
 ├── generate_corpus.py     # regenerate the synthetic corpus + golden set
-├── ingest.py              # run a full ingest into embedded Qdrant
+├── ingest.py              # tenant-scoped ingest into embedded Qdrant
 ├── ask.py                 # query the corpus as a principal (Phase 2 demo)
-└── agent.py               # run the orchestration agent (Phase 3 demo; HITL resume)
+├── agent.py               # run the orchestration agent (Phase 3 demo; HITL resume)
+└── governance.py          # RBAC + prompt rollback + lifecycle + tenancy + audit (Phase 4)
+```
+
+## Phase 4 — governance pipeline (on /ask)
+
+```
+   request: query + Principal(tenant, user, groups, role)
+            │
+            ▼
+   1. RBAC: require(role, ASK)               ── insufficient role → 403
+            ▼
+   2. RateLimiter.check(tenant)              ── over per-minute cap → 429
+      TokenBudget.check(tenant, day)         ── over daily tokens   → 429
+            ▼
+   3. RetrievalService.ask(query, principal) ── tenant's OWN collection + ACL
+            ▼
+   4. TokenBudget.record(tenant, tokens)     ── cost attribution (usage_daily)
+      AuditStore.append_event(...)           ── append-only "who did what"
+            ▼
+   answer + citations
+
+   Registries (builder/admin, audited, tenant-scoped):
+     PromptRegistry  add_version → pin/rollback → history     (prompt_version/prompt_active)
+     AgentRegistry   create(draft) → transition(test→published→deprecated)  (agent_definition)
+       lifecycle transitions validated against ALLOWED_TRANSITIONS
+
+   Isolation: each tenant → its own Qdrant collection (<prefix>__<tenant>);
+              every store row keyed by tenant; every read filtered by tenant.
 ```
 
 ## Phase 3 — orchestration flow
