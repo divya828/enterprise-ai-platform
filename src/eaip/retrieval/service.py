@@ -37,6 +37,16 @@ class RetrievalService:
         self._retriever = retriever
         self._answerer = answerer
 
+    @property
+    def retriever(self) -> HybridRetriever:
+        """The assembled hybrid retriever (reused by the orchestration layer)."""
+        return self._retriever
+
+    @property
+    def answerer(self) -> GroundedAnswerer:
+        """The grounded answerer (reused by the orchestration layer)."""
+        return self._answerer
+
     @classmethod
     def from_settings(cls, settings: Settings | None = None) -> RetrievalService:
         settings = settings or get_settings()

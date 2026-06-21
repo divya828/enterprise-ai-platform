@@ -66,6 +66,28 @@ def retriever(ingested_index: ChunkIndex, embedder: HashingEmbedder):
     )
 
 
+@pytest.fixture
+def agent_runner(retriever):
+    """An AgentRunner over the ingested corpus with an in-memory checkpointer.
+
+    Returns ``(runner, side_effect_log, episodic_store)`` so tests can assert on
+    answers, side effects (idempotency), and recorded episodes.
+    """
+    from langgraph.checkpoint.memory import MemorySaver
+
+    from eaip.orchestration import AgentNodes, AgentRunner, build_default_tools
+    from eaip.providers.stub import StubProvider
+    from eaip.retrieval.answerer import GroundedAnswerer
+    from eaip.storage import InMemoryStateStore
+
+    answerer = GroundedAnswerer(StubProvider(), min_score=0.0)
+    nodes = AgentNodes(StubProvider(), retriever, answerer, max_revisions=2)
+    tools, log = build_default_tools()
+    store = InMemoryStateStore()
+    runner = AgentRunner(nodes, tools, MemorySaver(), max_revisions=2, episodic=store)
+    return runner, log, store
+
+
 def make_doc(
     doc_id: str,
     *,

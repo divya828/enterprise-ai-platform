@@ -54,3 +54,55 @@ class StateStore(Protocol):
     def save_state(self, state: SyncState) -> None:
         """Persist the full sync state, replacing any prior contents."""
         ...
+
+
+@dataclass(frozen=True)
+class Episode:
+    """One completed agent run, recorded for the *episodic* memory tier.
+
+    Episodic memory is "what happened before": past runs the agent can recall to
+    inform new ones. We keep a compact record — who asked what, the route taken,
+    the outcome — keyed by ``thread_id`` so it lines up with the graph checkpoint.
+    """
+
+    thread_id: str
+    user: str
+    query: str
+    route: str
+    outcome: str
+    created_at: str  # ISO 8601 (passed in; the store does not call the clock)
+
+
+@runtime_checkable
+class EpisodicStore(Protocol):
+    """Durable store of past agent runs (episodic memory)."""
+
+    def record_episode(self, episode: Episode) -> None:
+        """Persist one completed run."""
+        ...
+
+    def recent_episodes(self, *, user: str | None = None, limit: int = 5) -> list[Episode]:
+        """Return the most recent episodes, optionally filtered to one user."""
+        ...
+
+
+@runtime_checkable
+class ProceduralStore(Protocol):
+    """Durable key→value store of learned rules/policies (procedural memory).
+
+    Procedural memory is "how to do things": durable guidance the agent applies
+    across runs (e.g. tone rules, which tool to prefer). Modeled as simple
+    namespaced key/value text so it's easy to read, edit, and version later.
+    """
+
+    def get_rule(self, key: str) -> str | None:
+        """Return a rule's value, or ``None`` if unset."""
+        ...
+
+    def set_rule(self, key: str, value: str) -> None:
+        """Create or update a rule."""
+        ...
+
+    def all_rules(self) -> dict[str, str]:
+        """Return every rule as a mapping."""
+        ...

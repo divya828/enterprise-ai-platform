@@ -31,6 +31,7 @@ rag = [
 orchestration = [
     "langgraph>=1.2,<2",
     "langchain-core>=1.4,<2",
+    "langgraph-checkpoint-sqlite>=3,<4",
 ]
 # Installed in Phase 2/5 when we wire real LLM backends / eval.
 llm = [

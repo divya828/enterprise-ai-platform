@@ -65,15 +65,21 @@ caveat documented); low-confidence/no-permitted-context → "I don't know" witho
 calling the LLM; reranking only on the top-N shortlist with per-stage latency
 logged.
 
-### Phase 3 — Orchestration
-LangGraph graph (plan → retrieve → answer) with explicit state + checkpointer;
-typed tool schemas + small tool catalog; four memory tiers (in-context,
-episodic, semantic=RAG, procedural); supervisor + draft→critic subgraphs; a
-human-in-the-loop interrupt for a sensitive action.
-**Edge cases:** agent-loop safety (max iterations, token/time budget, loop
-detection, kill switch — applied to the critic loop too); tool failures
-(timeout, retry+backoff, reasoning about errors); HITL durability (persist at
-interrupt, resume, idempotent, approval timeout/expiry, role-routed approvals).
+### Phase 3 — Orchestration ✅ (complete)
+LangGraph graph (supervisor → {knowledge: plan→retrieve→draft→critic→finalize |
+action: propose→HITL→execute→finalize}) with typed `AgentState` + a durable
+SqliteSaver checkpointer; typed tool catalog (`send_email`, `delete_records`,
+both sensitive); four memory tiers (in-context=state, episodic + procedural in
+SQLite, semantic=RAG); supervisor router + draft→critic subgraph loop; a
+human-in-the-loop interrupt on sensitive tools. CLI demo (`scripts/agent.py`).
+**Edge cases (handled + tested):** agent-loop safety (max iterations, token/time
+budget via fake clock, loop detection, kill switch — applied to the critic loop,
+which is bounded twice over); tool failures (soft timeout, retry+backoff,
+errors-as-data the agent reasons about, no crash); HITL durability (paused
+approval survives a simulated restart via a fresh SQLite connection; resume is
+idempotent — no double-send; approval timeout/expiry; role-routed approval).
+**Also fixed:** CI now installs the `rag` + `orchestration` extras (it had been
+red since Phase 1, when the test suite first imported the rag stack).
 
 ### Phase 3b — AutoGen spike (optional, isolated)
 Only if requested. A standalone `spikes/autogen/` script (not wired into the

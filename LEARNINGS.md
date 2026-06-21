@@ -249,3 +249,114 @@ in-memory corpus, so we rebuild it from the permitted chunks on each query. At
 this scale that's trivial and keeps permissions trivially correct (always exactly
 the caller's permitted set). A production system would cache a per-tenant sparse
 index and invalidate it on ACL/content changes — noted as the scale path.
+
+---
+
+## Phase 3 — Orchestration
+
+**Core concept: a stateful graph as the agent backbone.** LangGraph models the
+agent as a state machine — typed `AgentState` flows through nodes, each returning
+a partial update LangGraph merges in. Making the state explicit and typed (not an
+opaque dict) is half the value: you can see what flows between steps, a
+*checkpointer* can persist it, and a human-in-the-loop interrupt can pause on it
+and resume from it. We keep node *behavior* (`nodes.py`) separate from graph
+*topology* (`graph.py`) so each reads independently. The graph:
+`supervisor → {knowledge: retrieve→draft→critic→(loop)→finalize | action:
+propose→hitl_gate→execute→finalize}`.
+
+**Multi-agent collaboration built as subgraphs (no second framework).** Two
+patterns, both implemented on the state machine: (1) a **supervisor** that
+classifies the request and routes to a *knowledge* specialist (grounded RAG) or
+an *action* specialist (sensitive tools) — role separation; and (2) a
+**draft→critic loop** — a writer produces a grounded draft, a critic reviews it
+and asks for a revision, the writer revises. This is the collaboration/revision
+concept made concrete: two roles, a review step, a bounded loop. Building it
+ourselves (rather than importing a conversational framework) means the control
+flow is explicit and every edge is testable.
+
+**Edge case — agent-loop safety (stopping a misbehaving agent).** Autonomous
+loops can run forever, burn unbounded tokens, or get stuck. `LoopBudget`
+centralizes four independent guardrails — **max iterations**, **token budget**,
+**time budget**, **loop detection** (same node repeating ≥ threshold) — plus a
+**kill switch** (operator override). Every node ticks the budget and checks it; a
+trip sets `stopped_reason` and routes straight to finalize. Crucially this is
+applied to the **draft→critic loop too**: the loop is bounded *twice over* — by a
+revision cap (the conditional edge) AND by the budget — so a critic that always
+asks for changes still terminates. The budget is a live, time-aware object kept
+in a per-run registry, *not* in the checkpointed state (it isn't cleanly
+serializable, and a resume shouldn't reset the clock). Tested: kill switch,
+iteration cap, token/time budget (fake clock), loop detection, and a bounded
+critic loop that finishes cleanly rather than via a safety trip.
+
+**Edge case — tool failures (reason about errors, don't crash).** `run_tool`
+wraps every tool call with a soft **timeout**, **retries with exponential
+backoff**, and — when a tool ultimately fails — returns a *structured error
+result* (`ok=False`, `error=...`) rather than raising. So a failing tool surfaces
+as data the agent can reason about (and the graph completes with an error
+message) instead of an exception that kills the run. Tested at the unit level
+(transient-then-succeed, persistent failure, unexpected exception, timeout) and
+through the graph (an approved-but-failing `send_email` finishes the run with a
+"tool failed" answer).
+
+**Edge case — HITL durability, idempotency, expiry, role routing.** The sensitive
+tools (`send_email`, `delete_records`) are gated by `interrupt()`, which suspends
+the graph and surfaces the proposed action for approval. Because the graph is
+compiled with a **SqliteSaver** checkpointer, the paused state is *durable* — the
+demo pauses in one CLI invocation and a *separate* invocation resumes from the
+SQLite checkpoint and executes the tool (proven by a test that reopens the DB on
+a fresh connection). **Idempotency**: each sensitive call carries an
+`idempotency_key` derived from the request, and the side-effect log dedupes by
+key, so resuming an already-resolved run does not double-send (tested).
+**Expiry**: an approval older than the TTL is rejected as `expired`.
+**Role routing**: only resumers carrying an approver role (`admin`/`approver`)
+can approve; others are treated as denied (tested). Denials and expiries perform
+no side effect.
+
+**The four memory tiers, made concrete.** (1) **In-context** = the `AgentState`
+carried through one run. (2) **Episodic** = past runs recorded in SQLite
+(`EpisodicStore`), recalled by user. (3) **Semantic** = the Phase 2 RAG corpus,
+pulled in by the `retrieve` node. (4) **Procedural** = durable learned rules
+(`ProceduralStore`, key/value). The two durable tiers extend the same SQLite
+store from Phase 1 — "one store, many capabilities" — and have an in-memory
+backend for tests.
+
+**Decision/tradeoff — SqliteSaver version pin (an APIs-change scar).** The
+checkpointer is `langgraph-checkpoint-sqlite`. Pinning the obvious `2.x` line
+*broke at runtime*: it calls `JsonPlusSerializer.dumps()`, but the installed
+`langgraph-checkpoint==4.x` only exposes `dumps_typed`. The fix was the `3.x`
+line of the sqlite checkpointer, which targets the new serializer. This is the
+"verify current APIs before relying on them" rule paying for itself — the
+incompatibility only shows up when you actually run a checkpointed graph, not at
+import time.
+
+**Why standardize on LangGraph (and where AutoGen would help vs. hurt).** The
+spec asks for the argument I can now make from having built this:
+
+* **What the supervisor + critic patterns gave us here:** explicit, inspectable
+  control flow. Routing is a conditional edge I can unit-test; the critic loop is
+  a bounded edge I can prove terminates; the HITL pause is a durable interrupt
+  with idempotent resume. Every transition is deterministic and visible, which is
+  exactly what an enterprise platform needs — auditability, safety limits applied
+  uniformly, and state that survives a restart.
+
+* **Where a dedicated conversational multi-agent framework (e.g. AutoGen) adds
+  value:** open-ended, *emergent* collaboration — several agents conversing to
+  explore an under-specified problem, where you *want* the dialogue to find its
+  own shape (brainstorming, debate, free-form tool negotiation). AutoGen's
+  group-chat abstraction makes "N agents talk until done" cheap to express, and
+  the conversational paradigm is a genuinely different feel worth experiencing
+  (the optional Phase 3b spike exists for exactly that).
+
+* **Where it would add uncontrolled complexity:** the moment you need the
+  properties above — a hard iteration/token/time budget, a durable
+  human-approval gate with idempotent resume, deterministic routing you can test,
+  per-edge audit — emergent conversation becomes a liability. "Agents chat until
+  they decide they're done" has no natural place to enforce a kill switch, pin a
+  checkpoint, or guarantee a sensitive tool ran exactly once. You end up
+  re-imposing a state machine on top of the conversation anyway.
+
+* **The conclusion:** standardize on LangGraph as the deterministic, stateful
+  backbone (planning, tools, memory, HITL, safety), and reach for a conversational
+  framework only for a *bounded* sub-task where emergent dialogue is the point —
+  invoked as one node inside the graph, never as the backbone. Control at the
+  edges, creativity in a sandbox.

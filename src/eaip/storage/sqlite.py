@@ -26,7 +26,13 @@ from datetime import datetime
 from pathlib import Path
 
 from eaip.ingestion.models import SourceType
-from eaip.storage.base import StateStore, SyncState
+from eaip.storage.base import (
+    Episode,
+    EpisodicStore,
+    ProceduralStore,
+    StateStore,
+    SyncState,
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS sync_watermark (
@@ -38,11 +44,30 @@ CREATE TABLE IF NOT EXISTS indexed_doc (
     doc_id  TEXT NOT NULL,
     PRIMARY KEY (source, doc_id)
 );
+-- Episodic memory: one row per completed agent run.
+CREATE TABLE IF NOT EXISTS episode (
+    thread_id   TEXT PRIMARY KEY,
+    user        TEXT NOT NULL,
+    query       TEXT NOT NULL,
+    route       TEXT NOT NULL,
+    outcome     TEXT NOT NULL,
+    created_at  TEXT NOT NULL          -- ISO 8601
+);
+-- Procedural memory: learned rules/policies as namespaced key/value text.
+CREATE TABLE IF NOT EXISTS procedural_rule (
+    key    TEXT PRIMARY KEY,
+    value  TEXT NOT NULL
+);
 """
 
 
-class SqliteStateStore(StateStore):
-    """A durable StateStore backed by a SQLite database file."""
+class SqliteStateStore(StateStore, EpisodicStore, ProceduralStore):
+    """A durable store backed by a SQLite database file.
+
+    Implements the ingestion :class:`StateStore` plus the Phase 3 memory tiers
+    (:class:`EpisodicStore`, :class:`ProceduralStore`) over one connection — the
+    "one store, many capabilities" shape the storage abstraction was built for.
+    """
 
     def __init__(self, db_path: str | Path) -> None:
         self._db_path = str(db_path)
@@ -91,3 +116,66 @@ class SqliteStateStore(StateStore):
                     for doc_id in ids
                 ],
             )
+
+    # --- EpisodicStore interface ---
+    def record_episode(self, episode: Episode) -> None:
+        with self._conn:
+            # Upsert on thread_id so re-recording a resumed run replaces, not dupes.
+            self._conn.execute(
+                "INSERT INTO episode (thread_id, user, query, route, outcome, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?) "
+                "ON CONFLICT(thread_id) DO UPDATE SET "
+                "user=excluded.user, query=excluded.query, route=excluded.route, "
+                "outcome=excluded.outcome, created_at=excluded.created_at",
+                (
+                    episode.thread_id,
+                    episode.user,
+                    episode.query,
+                    episode.route,
+                    episode.outcome,
+                    episode.created_at,
+                ),
+            )
+
+    def recent_episodes(self, *, user: str | None = None, limit: int = 5) -> list[Episode]:
+        if user is None:
+            rows = self._conn.execute(
+                "SELECT * FROM episode ORDER BY created_at DESC LIMIT ?", (limit,)
+            )
+        else:
+            rows = self._conn.execute(
+                "SELECT * FROM episode WHERE user = ? ORDER BY created_at DESC LIMIT ?",
+                (user, limit),
+            )
+        return [
+            Episode(
+                thread_id=r["thread_id"],
+                user=r["user"],
+                query=r["query"],
+                route=r["route"],
+                outcome=r["outcome"],
+                created_at=r["created_at"],
+            )
+            for r in rows
+        ]
+
+    # --- ProceduralStore interface ---
+    def get_rule(self, key: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM procedural_rule WHERE key = ?", (key,)
+        ).fetchone()
+        return row["value"] if row else None
+
+    def set_rule(self, key: str, value: str) -> None:
+        with self._conn:
+            self._conn.execute(
+                "INSERT INTO procedural_rule (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+                (key, value),
+            )
+
+    def all_rules(self) -> dict[str, str]:
+        return {
+            r["key"]: r["value"]
+            for r in self._conn.execute("SELECT key, value FROM procedural_rule")
+        }

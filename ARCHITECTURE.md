@@ -110,15 +110,53 @@ src/eaip/
 │   ├── pipeline.py        # HybridRetriever, Principal, RetrievalResult
 │   ├── answerer.py        # GroundedAnswerer (citations + "I don't know" gate)
 │   └── service.py         # RetrievalService composition root (.ask)
+├── orchestration/         # Phase 3: the LangGraph agent
+│   ├── state.py           # AgentState (typed graph state; in-context memory)
+│   ├── safety.py          # LoopBudget (iter/token/time/loop + kill switch)
+│   ├── tools.py           # Tool catalog, run_tool (timeout/retry), sensitive tools
+│   ├── nodes.py           # supervisor / retrieve / draft / critic / propose / finalize
+│   ├── graph.py           # StateGraph wiring + HITL interrupt + conditional edges
+│   ├── runner.py          # AgentRunner (compile w/ checkpointer, run, resume)
+│   └── service.py         # build_runner_cm composition root (durable checkpointer)
 └── storage/               # storage-layer abstraction (SQLite default)
-    ├── base.py            # StateStore Protocol + SyncState transfer object
-    ├── memory.py          # InMemoryStateStore (tests)
-    └── sqlite.py          # SqliteStateStore (normalized tables; app default)
+    ├── base.py            # StateStore/EpisodicStore/ProceduralStore + transfer objects
+    ├── memory.py          # in-memory backends (tests)
+    └── sqlite.py          # SQLite backend: sync state + episodic + procedural memory
 
 scripts/
 ├── generate_corpus.py     # regenerate the synthetic corpus + golden set
 ├── ingest.py              # run a full ingest into embedded Qdrant
-└── ask.py                 # query the corpus as a principal (Phase 2 demo)
+├── ask.py                 # query the corpus as a principal (Phase 2 demo)
+└── agent.py               # run the orchestration agent (Phase 3 demo; HITL resume)
+```
+
+## Phase 3 — orchestration flow
+
+```
+   query + user/groups + thread_id
+            │
+            ▼
+        supervisor  (LLM-router → "knowledge" | "action")
+        │ each node ticks LoopBudget (iter/token/time/loop + kill switch);
+        │ a trip sets stopped_reason and jumps to finalize
+        ├──────────────────────────────┬───────────────────────────────┐
+        ▼ knowledge                     ▼ action
+   retrieve (Phase 2 RAG,          propose_action (parse sensitive
+   permission-scoped)               tool call: send_email|delete_records)
+        ▼                                │
+   draft  ◀──────────┐                   ▼
+        ▼            │ (revise,      hitl_gate ── interrupt() ──▶ PAUSE
+   critic ──────────┘  bounded by        │   (durable via SqliteSaver checkpointer)
+        │   revisions cap +              │   resume: Command(resume={approved, roles, ts})
+        │   budget)                      ▼
+        ▼                           execute_action
+   finalize ◀────────────────────── (iff approved + approver role + not expired;
+        │                            idempotent via idempotency_key)
+        ▼
+       answer  (+ episode recorded to EpisodicStore)
+
+   Memory tiers: in-context = AgentState · episodic = SQLite episodes ·
+                 semantic = the RAG corpus · procedural = SQLite rules
 ```
 
 ## Phase 2 — retrieval flow

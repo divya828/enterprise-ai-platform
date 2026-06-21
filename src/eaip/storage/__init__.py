@@ -1,17 +1,25 @@
 """Storage-layer abstraction (SQLite by default, Postgres-swappable).
 
-Public surface: the :class:`StateStore` interface, the :class:`SyncState`
-transfer object, and the two backends. The pipeline depends on ``StateStore``,
-never on a concrete backend.
+Public surface: the store interfaces, the transfer objects, and the two backends.
+Consumers depend on an interface, never on a concrete backend.
 """
 
-from eaip.storage.base import StateStore, SyncState
+from eaip.storage.base import (
+    Episode,
+    EpisodicStore,
+    ProceduralStore,
+    StateStore,
+    SyncState,
+)
 from eaip.storage.memory import InMemoryStateStore
 from eaip.storage.sqlite import SqliteStateStore
 
 __all__ = [
     "StateStore",
     "SyncState",
+    "Episode",
+    "EpisodicStore",
+    "ProceduralStore",
     "InMemoryStateStore",
     "SqliteStateStore",
 ]

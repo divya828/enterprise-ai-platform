@@ -21,7 +21,11 @@ jobs:
           python-version: "3.12"
 
       - name: Install dependencies
-        run: uv sync
+        # The test suite imports the rag + orchestration stacks (qdrant, langgraph,
+        # sentence-transformers, ...), so CI installs those extras. The llm extra is
+        # NOT installed — CI runs entirely on the offline stub provider/embedder/
+        # reranker and never calls a live model.
+        run: uv sync --extra rag --extra orchestration
 
       - name: Lint (ruff)
         run: |

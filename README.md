@@ -18,9 +18,10 @@ roadmap).
 
 ## Status
 
-Built in phases (0–6). **Phases 0–2 are complete** (scaffolding; ingestion +
-connectors; retrieval — the RAG core). See [PROJECT_PLAN.md](PROJECT_PLAN.md) for
-what each phase delivers.
+Built in phases (0–6). **Phases 0–3 are complete** (scaffolding; ingestion +
+connectors; retrieval — the RAG core; orchestration — LangGraph agent with
+supervisor/critic, memory tiers, safety limits, and durable HITL). See
+[PROJECT_PLAN.md](PROJECT_PLAN.md) for what each phase delivers.
 
 ## Prerequisites
 
@@ -106,6 +107,34 @@ is too weak → "I don't know"), and per-stage retrieval `timings_ms` (note the
 reranking cost). The defaults run offline; `EAIP_RERANKER=bge` and a real LLM
 provider give production-grade quality.
 
+### Run the orchestration agent (Phase 3)
+
+```bash
+uv sync --extra rag --extra orchestration
+```
+
+The agent is a LangGraph state machine: a supervisor routes each request to a
+**knowledge** specialist (grounded RAG) or an **action** specialist (sensitive
+tools), with loop-safety budgets, a draft→critic revision loop, four memory tiers,
+and a durable human-in-the-loop gate on irreversible actions.
+
+```bash
+# Knowledge path: plan → retrieve → draft → critic → finalize
+uv run python scripts/agent.py "how do I set up the vpn" --groups everyone
+
+# Action path: pauses for human approval of a sensitive tool...
+uv run python scripts/agent.py "send email to ceo@acme.test" --thread act1 --groups engineering
+# ...then a SEPARATE invocation resumes from the durable SQLite checkpoint:
+uv run python scripts/agent.py "send email to ceo@acme.test" --thread act1 --approve --role admin
+```
+
+The pause/resume survives across invocations because graph state is checkpointed
+to SQLite (`data/checkpoints.sqlite`). Approvals are idempotent (resuming twice
+won't double-send), expire after a TTL, and are role-routed (only `admin`/
+`approver` roles may approve). Safety limits (max iterations, token/time budget,
+loop detection, kill switch) stop a misbehaving run, and tool failures are
+retried then surfaced as reasoned errors rather than crashes.
+
 ## Test
 
 ```bash
@@ -162,7 +191,8 @@ Each module teaches a concept. (Modules marked _(later phase)_ don't exist yet.)
 | Storage abstraction (SQLite default, Postgres-swappable) | [`src/eaip/storage/`](src/eaip/storage/) |
 | Synthetic corpus + golden set            | [`scripts/generate_corpus.py`](scripts/generate_corpus.py), [`data/corpus/`](data/corpus/) |
 | Hybrid retrieval, RRF, cross-encoder rerank, grounded citations, "I don't know" | [`src/eaip/retrieval/`](src/eaip/retrieval/) |
-| LangGraph orchestration, supervisor + critic, HITL | `src/eaip/orchestration/` _(Phase 3)_ |
+| LangGraph agent: supervisor + critic, memory tiers, loop safety, durable HITL | [`src/eaip/orchestration/`](src/eaip/orchestration/) |
+| Memory tiers (episodic + procedural) in the SQLite store | [`src/eaip/storage/`](src/eaip/storage/) |
 | Multi-tenancy, RBAC, audit, prompt registry | `src/eaip/platform/` _(Phase 4)_           |
 | Tracing + evaluation harness             | `src/eaip/observability/`, `evals/` _(Phase 5)_ |
 | Prompt-injection defenses, red-team suite | `src/eaip/security/`, `tests/redteam/` _(Phase 6)_ |

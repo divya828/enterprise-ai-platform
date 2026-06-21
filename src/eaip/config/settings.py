@@ -133,6 +133,32 @@ class Settings(BaseSettings):
         "and in later phases audit logs, prompt registry, tenant config).",
     )
 
+    # --- Orchestration (Phase 3) ---
+    checkpoint_db_path: Path = Field(
+        default=Path("./data/checkpoints.sqlite"),
+        description="SQLite file for the LangGraph checkpointer (durable graph state + HITL).",
+    )
+    agent_max_iterations: int = Field(
+        default=6,
+        description="Hard cap on agent-loop steps before the run is stopped (loop safety).",
+    )
+    agent_token_budget: int = Field(
+        default=20_000,
+        description="Per-run token budget; exceeding it stops the run (loop safety).",
+    )
+    agent_time_budget_s: float = Field(
+        default=30.0,
+        description="Per-run wall-clock budget in seconds; exceeding it stops the run.",
+    )
+    critic_max_revisions: int = Field(
+        default=2,
+        description="Max draft->critic revision cycles before finalizing (critic loop bound).",
+    )
+    approval_ttl_s: float = Field(
+        default=3600.0,
+        description="How long a pending HITL approval stays valid before it expires.",
+    )
+
     # --- Runtime ---
     data_dir: Path = Field(default=Path("./data"))
     log_level: str = Field(default="INFO")
